@@ -103,13 +103,13 @@ def delete_cliente(id: int) -> None:
 def save_alumno(d: dict) -> int:
     if d.get("id"):
         mut(
-            "UPDATE alumnos_neae SET nome=?, curso_id=?, curso_ingreso=?, notas=? WHERE id=?",
-            (d["nome"], d.get("curso_id"), d["curso_ingreso"], d["notas"], d["id"]),
+            "UPDATE alumnos_neae SET nome=?, curso_id=?, curso_ingreso=?, importe_beca=?, notas=? WHERE id=?",
+            (d["nome"], d.get("curso_id"), d["curso_ingreso"], d.get("importe_beca", 0), d["notas"], d["id"]),
         )
         return d["id"]
     return mut(
-        "INSERT OR IGNORE INTO alumnos_neae (nome, curso_id, curso_ingreso, notas) VALUES (?,?,?,?)",
-        (d["nome"], d.get("curso_id"), d["curso_ingreso"], d["notas"]),
+        "INSERT OR IGNORE INTO alumnos_neae (nome, curso_id, curso_ingreso, importe_beca, notas) VALUES (?,?,?,?,?)",
+        (d["nome"], d.get("curso_id"), d["curso_ingreso"], d.get("importe_beca", 0), d["notas"]),
     )
 
 

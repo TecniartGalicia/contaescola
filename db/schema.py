@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS alumnos_neae (
     nome          TEXT    NOT NULL UNIQUE,
     curso_id      INTEGER REFERENCES cursos(id) ON DELETE SET NULL,
     curso_ingreso TEXT    NOT NULL DEFAULT '',
+    importe_beca  REAL    NOT NULL DEFAULT 0,
     notas         TEXT    NOT NULL DEFAULT ''
 );
 
@@ -144,6 +145,7 @@ DATOS_INICIALES = {
 MIGRATIONS = [
     ("clientes",     "direccion",    "TEXT NOT NULL DEFAULT ''"),
     ("alumnos_neae", "curso_id",     "INTEGER REFERENCES cursos(id)"),
+    ("alumnos_neae", "importe_beca", "REAL NOT NULL DEFAULT 0"),
     ("diario",       "ano",          "INTEGER NOT NULL DEFAULT 2026"),
     ("diario",       "curso_id",     "INTEGER REFERENCES cursos(id)"),
 ]
