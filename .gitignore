@@ -1,24 +1,9 @@
-# Base de datos local
-*.db
-*.db-shm
-*.db-wal
-
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 
-# Excel de migración (datos sensibles)
-*.xlsx
-*.xls
-~$*
-
-# Scripts de migración local
-migrar_excel.py
-fix_cursos.py
-fix_duplicados.py
-
 # Sistema
 .DS_Store
 Thumbs.db
-.env
+~$*
