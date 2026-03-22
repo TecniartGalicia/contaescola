@@ -107,12 +107,24 @@ def get_diario_cliente(cliente_id: int) -> list[dict]:
 
 # ── Resúmenes ───────────────────────────────────────────────────
 def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
-    """Devuelve {nombre_partida: {debe, haber}} para el año dado."""
-    sql = "SELECT xustifica, tipo, SUM(importe) as t FROM diario WHERE ano=? AND xustifica!=''"
-    params: list = [ano]
+    """
+    Devuelve {nombre_partida: {debe, haber}} para un curso escolar.
+
+    Las partidas son por CURSO ESCOLAR (ej: 2025-2026), que abarca
+    dos años naturales (jul-dic 2025 + ene-jun 2026).
+    Por eso filtramos por curso_id, ignorando el año natural del sidebar.
+    Si no hay curso seleccionado, usamos el ano como fallback.
+    """
     if curso_id:
-        sql += " AND curso_id=?"
-        params.append(curso_id)
+        # ★ CORRECCIÓN: filtrar por curso, NO por año natural
+        # Una partida del curso 2025-2026 suma gastos de 2025 Y 2026
+        sql    = "SELECT xustifica, tipo, SUM(importe) as t FROM diario WHERE curso_id=? AND xustifica!=''"
+        params: list = [curso_id]
+    else:
+        # Sin curso seleccionado → año natural como fallback
+        sql    = "SELECT xustifica, tipo, SUM(importe) as t FROM diario WHERE ano=? AND xustifica!=''"
+        params = [ano]
+
     rows = q(sql + " GROUP BY xustifica, tipo", tuple(params))
     res: dict = {}
     for r in rows:
