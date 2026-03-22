@@ -3,7 +3,7 @@ components/sidebar.py
 Sidebar de navegación. Devuelve (ano_activo, curso_id_filtro).
 """
 import streamlit as st
-from db import get_anos, get_ano_activo, set_ano_activo, get_cursos, add_ano
+from db import get_anos, get_ano_activo, set_ano_activo, get_cursos, add_ano, get_cfg
 
 PAGES = [
     ("📊", "Dashboard",             "dash"),
@@ -25,9 +25,25 @@ PAGES = [
 
 def render_sidebar() -> tuple[int, int | None]:
     with st.sidebar:
-        st.markdown("## 📒 ContaEscola")
-        st.caption("Contabilidade do Centro v6.0")
-        st.divider()
+
+        # ── Logo Opción C — título grande + badge dorado con nombre del centro ──
+        centro_nome = get_cfg("centro_nome", "Centro Educativo")
+        st.markdown(f"""
+            <div style="padding:18px 8px 14px;text-align:center;
+                        border-bottom:1px solid #1e3a5f;margin-bottom:12px;">
+                <div style="font-size:22px;font-weight:600;letter-spacing:-0.03em;
+                            color:white;line-height:1.1;margin-bottom:8px;">
+                    ContaEscola
+                </div>
+                <div style="display:inline-block;background:#f59e0b;color:#1a0a00;
+                            font-size:10px;font-weight:600;letter-spacing:0.04em;
+                            padding:3px 10px;border-radius:20px;text-transform:uppercase;
+                            max-width:160px;white-space:nowrap;
+                            overflow:hidden;text-overflow:ellipsis;">
+                    {centro_nome}
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
         # Selector de año activo
         anos    = get_anos()
