@@ -12,8 +12,19 @@ from db import (
     get_partidas_config, get_ano_activo,
     save_diario, delete_diario,
 )
+from db.connection import q1
 from db.schema import PERIODOS, CATEGORIAS_COM
 from utils import fecha_to_trimestre
+
+
+def _get_ultimo_curso_id(area: str) -> int | None:
+    """Devuelve el curso_id del último movimiento grabado en esa área."""
+    r = q1(
+        "SELECT curso_id FROM diario WHERE area=? AND curso_id IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1",
+        (area,)
+    )
+    return r["curso_id"] if r else None
 
 
 def form_movemento(
@@ -21,17 +32,6 @@ def form_movemento(
     mov: dict | None = None,
     key_prefix: str = "mov",
 ) -> bool:
-    """
-    Renderiza el formulario de movimiento.
-
-    Args:
-        area:       'func' o 'com'
-        mov:        dict con el movimiento a editar (None = nuevo)
-        key_prefix: prefijo para las keys de Streamlit
-
-    Returns:
-        True si se guardó o eliminó (señal para st.rerun())
-    """
     cursos   = get_cursos()
     codigos  = get_codigos()
     clientes = get_clientes()
@@ -46,9 +46,19 @@ def form_movemento(
 
     # ── Paso 1: Curso (fuera del form → reactivo) ─────────────────
     st.markdown("**🎓 Paso 1 — Curso Escolar** *(actualiza as partidas dispoñibles)*")
-    cur_def = next(
-        (i for i, c in enumerate(cursos) if mov and c["id"] == mov.get("curso_id")), 0
-    )
+
+    if mov:
+        # Edición → usar el curso del movimiento
+        cur_def = next(
+            (i for i, c in enumerate(cursos) if c["id"] == mov.get("curso_id")), 0
+        )
+    else:
+        # ★ Nuevo → usar el curso del último movimiento grabado en esta área
+        ultimo_curso_id = _get_ultimo_curso_id(area)
+        cur_def = next(
+            (i for i, c in enumerate(cursos) if c["id"] == ultimo_curso_id), 0
+        )
+
     cur_pre = st.selectbox(
         "Curso escolar *", cur_names,
         index=cur_def, key=f"{key_prefix}_pre_cur",
@@ -91,7 +101,6 @@ def form_movemento(
             key=f"{key_prefix}_con",
         )
 
-        # Partidas filtradas por curso (cargadas arriba, fuera del form)
         p_opts = ["— Sen partida —"] + [p["nome"] for p in pcs]
         p_def  = 0
         if mov and mov.get("xustifica") and mov["xustifica"] in p_opts:
