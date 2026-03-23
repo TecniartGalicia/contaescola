@@ -111,17 +111,16 @@ def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
     Devuelve {nombre_partida: {debe, haber}} para un curso escolar.
 
     Las partidas son por CURSO ESCOLAR (ej: 2025-2026), que abarca
-    dos años naturales (jul-dic 2025 + ene-jun 2026).
-    Por eso filtramos por curso_id, ignorando el año natural del sidebar.
+    dos años naturales. Por eso filtramos por curso_id, no por ano.
     Si no hay curso seleccionado, usamos el ano como fallback.
+
+    ★ Devuelve TANTO gastos (debe) COMO ingresos (haber) para que
+      partidas sin importe asignado puedan usar los ingresos como referencia.
     """
     if curso_id:
-        # ★ CORRECCIÓN: filtrar por curso, NO por año natural
-        # Una partida del curso 2025-2026 suma gastos de 2025 Y 2026
         sql    = "SELECT xustifica, tipo, SUM(importe) as t FROM diario WHERE curso_id=? AND xustifica!=''"
         params: list = [curso_id]
     else:
-        # Sin curso seleccionado → año natural como fallback
         sql    = "SELECT xustifica, tipo, SUM(importe) as t FROM diario WHERE ano=? AND xustifica!=''"
         params = [ano]
 
@@ -142,7 +141,6 @@ def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
     alumnos = get_alumnos()
     result: dict = {}
     for al in alumnos:
-        # Filtrar por curso si se especifica
         if curso_id and al.get("curso_id") and al["curso_id"] != curso_id:
             continue
         sql = """
