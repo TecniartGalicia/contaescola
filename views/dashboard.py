@@ -7,7 +7,8 @@ from utils import fmt, fmtD, sum_tipo
 
 
 def render(ano: int, cur_id: int | None) -> None:
-    st.title(f"📊 Dashboard — {ano}")
+    st.title(f"🏠 Resumo — Ano {ano}")
+    st.caption("Visión xeral da contabilidade do centro")
 
     fm = get_diario("func", ano, cur_id)
     cm = get_diario("com",  ano, cur_id)
@@ -65,7 +66,7 @@ def render(ano: int, cur_id: int | None) -> None:
     )[:10]
     if all_m:
         df = pd.DataFrame([{
-            "Área":    "📘Func" if m["_a"]=="func" else "🍽️Com",
+            "Área":    "📘 Func" if m["_a"]=="func" else "🍽️ Com",
             "Data":    fmtD(m.get("data","")),
             "Concepto": m.get("concepto",""),
             "Curso":   m.get("curso_nome",""),
