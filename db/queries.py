@@ -1,7 +1,6 @@
 """
 db/queries.py
 Todas las consultas SELECT de la aplicación.
-Sin lógica de presentación — devuelve siempre listas de dicts o un dict.
 """
 from .connection import q, q1
 from .schema import PERIODOS
@@ -12,19 +11,15 @@ def get_cfg(clave: str, default: str = "") -> str:
     r = q1("SELECT valor FROM configuracion WHERE clave=?", (clave,))
     return r["valor"] if r else default
 
-
 def get_ano_activo() -> int:
     return int(get_cfg("ano_activo", "2026"))
-
 
 # ── Tablas maestras ─────────────────────────────────────────────
 def get_anos() -> list[int]:
     return [r["ano"] for r in q("SELECT ano FROM anos ORDER BY ano")]
 
-
 def get_cursos() -> list[dict]:
     return q("SELECT * FROM cursos ORDER BY nome")
-
 
 def get_codigos(solo_activos: bool = True) -> list[dict]:
     sql = "SELECT * FROM codigos"
@@ -32,14 +27,11 @@ def get_codigos(solo_activos: bool = True) -> list[dict]:
         sql += " WHERE activo=1"
     return q(sql + " ORDER BY orden, codigo")
 
-
 def get_clientes() -> list[dict]:
     return q("SELECT * FROM clientes ORDER BY nome")
 
-
 def get_cliente(id: int) -> dict | None:
     return q1("SELECT * FROM clientes WHERE id=?", (id,))
-
 
 def get_alumnos() -> list[dict]:
     return q(
@@ -48,7 +40,6 @@ def get_alumnos() -> list[dict]:
            LEFT JOIN cursos c ON a.curso_id = c.id
            ORDER BY a.nome"""
     )
-
 
 def get_partidas_config(curso_id: int | None = None) -> list[dict]:
     if curso_id:
@@ -67,12 +58,10 @@ def get_partidas_config(curso_id: int | None = None) -> list[dict]:
            ORDER BY c.nome, pc.nome"""
     )
 
-
 # ── Saldos ──────────────────────────────────────────────────────
 def get_saldo(ano: int, area: str) -> float:
     r = q1("SELECT saldo_anterior FROM saldos WHERE ano=? AND area=?", (ano, area))
     return r["saldo_anterior"] if r else 0.0
-
 
 # ── Diario ──────────────────────────────────────────────────────
 def get_diario(area: str, ano: int, curso_id: int | None = None) -> list[dict]:
@@ -93,7 +82,6 @@ def get_diario(area: str, ano: int, curso_id: int | None = None) -> list[dict]:
         params.append(curso_id)
     return q(sql + " ORDER BY d.num", tuple(params))
 
-
 def get_diario_cliente(cliente_id: int) -> list[dict]:
     return q(
         """SELECT d.*, c.nome as curso_nome
@@ -104,18 +92,26 @@ def get_diario_cliente(cliente_id: int) -> list[dict]:
         (cliente_id,),
     )
 
+def get_diario_partida(xustifica: str, curso_id: int) -> list[dict]:
+    """Movementos dun curso asociados a unha partida concreta."""
+    return q(
+        """SELECT d.*,
+                  c.nome  AS curso_nome,
+                  cl.nome AS cliente_nome
+           FROM diario d
+           LEFT JOIN cursos   c  ON d.curso_id   = c.id
+           LEFT JOIN clientes cl ON d.cliente_id  = cl.id
+           WHERE d.xustifica = ? AND d.curso_id = ?
+           ORDER BY d.data, d.num""",
+        (xustifica, curso_id),
+    )
 
 # ── Resúmenes ───────────────────────────────────────────────────
 def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
     """
     Devuelve {nombre_partida: {debe, haber}} para un curso escolar.
-
-    Las partidas son por CURSO ESCOLAR (ej: 2025-2026), que abarca
-    dos años naturales. Por eso filtramos por curso_id, no por ano.
-    Si no hay curso seleccionado, usamos el ano como fallback.
-
-    ★ Devuelve TANTO gastos (debe) COMO ingresos (haber) para que
-      partidas sin importe asignado puedan usar los ingresos como referencia.
+    Filtra por curso_id (abarca dos años naturales), no por ano.
+    Si no hay curso, usa el ano como fallback.
     """
     if curso_id:
         sql    = "SELECT xustifica, tipo, SUM(importe) as t FROM diario WHERE curso_id=? AND xustifica!=''"
@@ -132,27 +128,37 @@ def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
         res[r["xustifica"]][key] += r["t"]
     return res
 
-
 def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
     """
     Devuelve todos los alumnos NEAE con sus movimientos.
-    Si un alumno no tiene movimientos aparece igualmente con lista vacía.
+    ★ Filtra por curso_id si está disponible, ignorando el año natural.
+    Si no hay curso seleccionado, usa el ano como fallback.
     """
     alumnos = get_alumnos()
     result: dict = {}
     for al in alumnos:
         if curso_id and al.get("curso_id") and al["curso_id"] != curso_id:
             continue
-        sql = """
-            SELECT d.*, c.nome as curso_nome
-            FROM diario d
-            LEFT JOIN cursos c ON d.curso_id = c.id
-            WHERE d.ano=? AND d.alumno_neae=?
-        """
-        params: list = [ano, al["nome"]]
+
         if curso_id:
-            sql += " AND d.curso_id=?"
-            params.append(curso_id)
+            # ★ Filtrar por curso — ignora el año natural
+            sql = """
+                SELECT d.*, c.nome as curso_nome
+                FROM diario d
+                LEFT JOIN cursos c ON d.curso_id = c.id
+                WHERE d.curso_id=? AND d.alumno_neae=?
+            """
+            params: list = [curso_id, al["nome"]]
+        else:
+            # Sin curso → usar año natural
+            sql = """
+                SELECT d.*, c.nome as curso_nome
+                FROM diario d
+                LEFT JOIN cursos c ON d.curso_id = c.id
+                WHERE d.ano=? AND d.alumno_neae=?
+            """
+            params = [ano, al["nome"]]
+
         movs = q(sql + " ORDER BY d.data", tuple(params))
         result[al["nome"]] = {
             "alumno": al,
@@ -161,7 +167,6 @@ def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
             "haber":  sum(m["importe"] for m in movs if m["tipo"] == "I"),
         }
     return result
-
 
 # ── Informes cruzados ───────────────────────────────────────────
 def get_informes(params: dict) -> list[dict]:
@@ -189,10 +194,8 @@ def get_informes(params: dict) -> list[dict]:
     if params.get("fecha_hasta"): sql += " AND d.data<=?";       p.append(params["fecha_hasta"])
     return q(sql + " ORDER BY d.ano, d.data, d.num", tuple(p))
 
-
 # ── Modelo 347 ──────────────────────────────────────────────────
 def get_347(ano: int, umbral: float) -> list[dict]:
-    """Provedores con total_pagado >= umbral + desglose trimestral."""
     provs = q(
         """SELECT cl.id, cl.nome, cl.nif, cl.email, cl.telefono, cl.direccion,
                   SUM(CASE WHEN d.tipo='G' THEN d.importe ELSE 0 END) AS total_pagado,

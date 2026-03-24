@@ -7,7 +7,7 @@ from .schema import init_db, PERIODOS, CATEGORIAS_COM, UMBRAL_347
 from .queries import (
     get_cfg, get_ano_activo, get_anos, get_cursos, get_codigos,
     get_clientes, get_cliente, get_alumnos, get_partidas_config,
-    get_saldo, get_diario, get_diario_cliente,
+    get_saldo, get_diario, get_diario_cliente, get_diario_partida,
     get_partidas_resumen, get_becas_resumen,
     get_informes, get_347,
 )
