@@ -6,7 +6,6 @@ from .connection import q, q1
 from .schema import PERIODOS
 
 
-# ── Configuración ───────────────────────────────────────────────
 def get_cfg(clave: str, default: str = "") -> str:
     r = q1("SELECT valor FROM configuracion WHERE clave=?", (clave,))
     return r["valor"] if r else default
@@ -14,7 +13,6 @@ def get_cfg(clave: str, default: str = "") -> str:
 def get_ano_activo() -> int:
     return int(get_cfg("ano_activo", "2026"))
 
-# ── Tablas maestras ─────────────────────────────────────────────
 def get_anos() -> list[int]:
     return [r["ano"] for r in q("SELECT ano FROM anos ORDER BY ano")]
 
@@ -58,12 +56,10 @@ def get_partidas_config(curso_id: int | None = None) -> list[dict]:
            ORDER BY c.nome, pc.nome"""
     )
 
-# ── Saldos ──────────────────────────────────────────────────────
 def get_saldo(ano: int, area: str) -> float:
     r = q1("SELECT saldo_anterior FROM saldos WHERE ano=? AND area=?", (ano, area))
     return r["saldo_anterior"] if r else 0.0
 
-# ── Diario ──────────────────────────────────────────────────────
 def get_diario(area: str, ano: int, curso_id: int | None = None) -> list[dict]:
     sql = """
         SELECT d.*,
@@ -94,48 +90,39 @@ def get_diario_cliente(cliente_id: int) -> list[dict]:
 
 def get_diario_partida(xustifica: str, curso_id: int) -> list[dict]:
     """
-    Movementos asociados a unha partida concreta dun curso.
-    ★ Filtra por nome da partida (xustifica) — independentemente do
-      curso_id do movemento, porque o usuario pode asignar un movemento
-      de 25/26 a unha partida de 24/25.
+    Movementos asociados a unha partida dun curso concreto.
+    ★ Usa partida_curso_id para identificar correctamente a qué curso
+      pertenece la partida, independientemente del curso del movimiento.
     """
     return q(
         """SELECT d.*,
                   c.nome  AS curso_nome,
                   cl.nome AS cliente_nome
            FROM diario d
-           JOIN partidas_config pc
-                ON pc.nome = d.xustifica AND pc.curso_id = ?
            LEFT JOIN cursos   c  ON d.curso_id   = c.id
            LEFT JOIN clientes cl ON d.cliente_id  = cl.id
            WHERE d.xustifica = ?
+             AND d.partida_curso_id = ?
            ORDER BY d.data, d.num""",
-        (curso_id, xustifica),
+        (xustifica, curso_id),
     )
 
-# ── Resúmenes ───────────────────────────────────────────────────
 def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
     """
     Devuelve {nombre_partida: {debe, haber}} para un curso escolar.
-
-    ★ CORRECCIÓN: filtra por el curso de la PARTIDA (partidas_config.curso_id),
-      no por el curso del movimiento (diario.curso_id).
-      Así un movimiento del curso 25/26 asignado a una partida del 24/25
-      aparece correctamente en las partidas del 24/25.
+    ★ Filtra por partida_curso_id — el curso al que pertenece la PARTIDA,
+      no el curso del movimiento. Así un movimiento del curso 25/26
+      asignado a una partida del 24/25 aparece correctamente en el 24/25.
     """
     if curso_id:
-        # JOIN con partidas_config para filtrar por el curso de la partida
         rows = q(
-            """SELECT d.xustifica, d.tipo, SUM(d.importe) as t
-               FROM diario d
-               JOIN partidas_config pc
-                    ON pc.nome = d.xustifica AND pc.curso_id = ?
-               WHERE d.xustifica != ''
-               GROUP BY d.xustifica, d.tipo""",
+            """SELECT xustifica, tipo, SUM(importe) as t
+               FROM diario
+               WHERE partida_curso_id = ? AND xustifica != ''
+               GROUP BY xustifica, tipo""",
             (curso_id,),
         )
     else:
-        # Sin curso → fallback por año natural
         rows = q(
             """SELECT xustifica, tipo, SUM(importe) as t
                FROM diario WHERE ano=? AND xustifica!=''
@@ -151,16 +138,11 @@ def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
     return res
 
 def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
-    """
-    Devuelve todos los alumnos NEAE con sus movimientos.
-    Filtra por curso_id si está disponible, ignorando el año natural.
-    """
     alumnos = get_alumnos()
     result: dict = {}
     for al in alumnos:
         if curso_id and al.get("curso_id") and al["curso_id"] != curso_id:
             continue
-
         if curso_id:
             sql = """
                 SELECT d.*, c.nome as curso_nome
@@ -177,7 +159,6 @@ def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
                 WHERE d.ano=? AND d.alumno_neae=?
             """
             params = [ano, al["nome"]]
-
         movs = q(sql + " ORDER BY d.data", tuple(params))
         result[al["nome"]] = {
             "alumno": al,
@@ -187,7 +168,6 @@ def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
         }
     return result
 
-# ── Informes cruzados ───────────────────────────────────────────
 def get_informes(params: dict) -> list[dict]:
     sql = """
         SELECT d.*,
@@ -213,7 +193,6 @@ def get_informes(params: dict) -> list[dict]:
     if params.get("fecha_hasta"): sql += " AND d.data<=?";       p.append(params["fecha_hasta"])
     return q(sql + " ORDER BY d.ano, d.data, d.num", tuple(p))
 
-# ── Modelo 347 ──────────────────────────────────────────────────
 def get_347(ano: int, umbral: float) -> list[dict]:
     provs = q(
         """SELECT cl.id, cl.nome, cl.nif, cl.email, cl.telefono, cl.direccion,

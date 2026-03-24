@@ -1,12 +1,9 @@
 """
 components/form_movemento.py
 Formulario de alta/edición de movimientos del Diario.
-Compartido por Diario Funcionamento y Diario Comedor.
 """
 from datetime import date, datetime
-
 import streamlit as st
-
 from db import (
     get_cursos, get_codigos, get_clientes, get_alumnos,
     get_partidas_config, get_ano_activo,
@@ -20,17 +17,12 @@ from utils import fecha_to_trimestre
 def _get_ultimo_curso_id(area: str) -> int | None:
     r = q1(
         "SELECT curso_id FROM diario WHERE area=? AND curso_id IS NOT NULL "
-        "ORDER BY id DESC LIMIT 1",
-        (area,)
+        "ORDER BY id DESC LIMIT 1", (area,)
     )
     return r["curso_id"] if r else None
 
 
-def form_movemento(
-    area: str,
-    mov: dict | None = None,
-    key_prefix: str = "mov",
-) -> bool:
+def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") -> bool:
     cursos   = get_cursos()
     codigos  = get_codigos()
     clientes = get_clientes()
@@ -38,76 +30,54 @@ def form_movemento(
     ano_act  = get_ano_activo()
 
     if not cursos:
-        st.warning("⚠️ Non hai cursos creados. Ve a ⚙️ Tablas Maestras.")
+        st.warning("Non hai cursos creados. Ve a Tablas Maestras.")
         return False
 
     cur_names = [c["nome"] for c in cursos]
 
     # ── Paso 1: Curso do movemento ─────────────────────────────────
     st.markdown("**🎓 Paso 1 — Curso Escolar do movemento**")
-
     if mov:
-        cur_def = next(
-            (i for i, c in enumerate(cursos) if c["id"] == mov.get("curso_id")), 0
-        )
+        cur_def = next((i for i, c in enumerate(cursos) if c["id"] == mov.get("curso_id")), 0)
     else:
-        ultimo_curso_id = _get_ultimo_curso_id(area)
-        cur_def = next(
-            (i for i, c in enumerate(cursos) if c["id"] == ultimo_curso_id), 0
-        )
+        ultimo = _get_ultimo_curso_id(area)
+        cur_def = next((i for i, c in enumerate(cursos) if c["id"] == ultimo), 0)
 
-    cur_pre = st.selectbox(
-        "Curso escolar do movemento *", cur_names,
-        index=cur_def, key=f"{key_prefix}_pre_cur",
-    )
+    cur_pre  = st.selectbox("Curso escolar do movemento *", cur_names,
+                             index=cur_def, key=f"{key_prefix}_pre_cur")
     cur_id_v = next((c["id"] for c in cursos if c["nome"] == cur_pre), None)
 
     # ── Paso 2: Datos do movemento ─────────────────────────────────
     st.markdown("**📝 Paso 2 — Datos do movemento**")
     with st.form(key=f"{key_prefix}_form"):
-        tipo = st.radio(
-            "Tipo *",
-            ["G — Gasto / Debe", "I — Ingreso / Haber"],
-            index=0 if (mov is None or mov.get("tipo", "G") == "G") else 1,
-            horizontal=True, key=f"{key_prefix}_tipo",
-        )
+        tipo = st.radio("Tipo *", ["G — Gasto / Debe", "I — Ingreso / Haber"],
+                        index=0 if (mov is None or mov.get("tipo","G")=="G") else 1,
+                        horizontal=True, key=f"{key_prefix}_tipo")
         tipo_v = "G" if tipo.startswith("G") else "I"
 
         c1, c2 = st.columns(2)
-        data_v = c1.date_input(
-            "📅 Data *",
-            value=datetime.strptime(mov["data"], "%Y-%m-%d").date()
+        data_v = c1.date_input("📅 Data *",
+            value=datetime.strptime(mov["data"],"%Y-%m-%d").date()
                   if mov and mov.get("data") else date.today(),
-            key=f"{key_prefix}_data",
-        )
-        imp_v = c2.number_input(
-            "💶 Importe (€) *", min_value=0.01, step=0.01,
+            key=f"{key_prefix}_data")
+        imp_v = c2.number_input("💶 Importe (€) *", min_value=0.01, step=0.01,
             value=float(mov["importe"]) if mov and mov.get("importe") else 0.01,
-            key=f"{key_prefix}_imp",
-        )
+            key=f"{key_prefix}_imp")
 
-        con_v = st.text_input(
-            "📝 Concepto *",
-            value=mov.get("concepto", "") if mov else "",
-            key=f"{key_prefix}_con",
-        )
+        con_v = st.text_input("📝 Concepto *",
+            value=mov.get("concepto","") if mov else "",
+            key=f"{key_prefix}_con")
 
-        # ── Partida: dos selectores en paralelo ────────────────────
-        # Selector 1: curso de la partida (independiente del curso del movimiento)
-        # Selector 2: partidas del curso seleccionado en selector 1
+        # ── Partida: curso + partida en paralelo ───────────────────
         st.markdown("**📋 Partida Finalista**")
         pc1, pc2 = st.columns(2)
 
         # Curso de la partida — por defecto el mismo del movimiento
-        # Si editamos, usar el curso de la partida existente si es diferente
-        part_cur_def = cur_def  # por defecto mismo curso que el movimiento
-        if mov and mov.get("xustifica"):
-            # Buscar en qué curso está esa partida
-            for i, c in enumerate(cursos):
-                pcs_check = get_partidas_config(c["id"])
-                if any(p["nome"] == mov["xustifica"] for p in pcs_check):
-                    part_cur_def = i
-                    break
+        part_cur_def = cur_def
+        if mov and mov.get("partida_curso_id"):
+            idx = next((i for i, c in enumerate(cursos)
+                        if c["id"] == mov["partida_curso_id"]), cur_def)
+            part_cur_def = idx
 
         part_cur_sel = pc1.selectbox(
             "Curso da partida",
@@ -118,37 +88,30 @@ def form_movemento(
         )
         part_cur_id = next((c["id"] for c in cursos if c["nome"] == part_cur_sel), None)
 
-        # Indicador si el curso de la partida es diferente al del movimiento
         if part_cur_id != cur_id_v:
             pc1.markdown(
                 "<div style='background:#fef3c7;border:1px solid #fcd34d;"
                 "border-radius:6px;padding:4px 8px;font-size:11px;color:#92400e;'>"
                 "⚠️ Partida de curso diferente ao movemento</div>",
-                unsafe_allow_html=True
-            )
+                unsafe_allow_html=True)
 
-        # Partidas del curso seleccionado
-        pcs = get_partidas_config(part_cur_id) if part_cur_id else []
+        pcs    = get_partidas_config(part_cur_id) if part_cur_id else []
         p_opts = ["— Sen partida —"] + [p["nome"] for p in pcs]
         p_def  = 0
         if mov and mov.get("xustifica") and mov["xustifica"] in p_opts:
             p_def = p_opts.index(mov["xustifica"])
-
         xust_sel = pc2.selectbox(
             f"Partida ({len(pcs)} en '{part_cur_sel}')",
-            p_opts, index=p_def, key=f"{key_prefix}_xust",
-        )
+            p_opts, index=p_def, key=f"{key_prefix}_xust")
         xust_v = "" if xust_sel.startswith("—") else xust_sel
 
         c3, c4 = st.columns(2)
-
         if area == "func":
             cod_opts = ["— Sen código —"] + [
-                f"{c['codigo']} — {c['descripcion']}" for c in codigos
-            ]
+                f"{c['codigo']} — {c['descripcion']}" for c in codigos]
             cod_def = 0
             if mov and mov.get("codigo"):
-                m = [i+1 for i, c in enumerate(codigos) if c["codigo"] == mov["codigo"]]
+                m = [i+1 for i,c in enumerate(codigos) if c["codigo"]==mov["codigo"]]
                 if m: cod_def = m[0]
             cod_sel = c3.selectbox("🏷️ Código contable", cod_opts,
                                    index=cod_def, key=f"{key_prefix}_cod")
@@ -164,12 +127,10 @@ def form_movemento(
 
         cl_opts = ["— Sen vincular —"] + [
             f"{c['nome']}" + (f" ({c['nif']})" if c["nif"] else "")
-            for c in clientes
-        ]
+            for c in clientes]
         cl_def = 0
         if mov and mov.get("cliente_id"):
-            idx = next((i+1 for i, c in enumerate(clientes)
-                        if c["id"] == mov["cliente_id"]), 0)
+            idx = next((i+1 for i,c in enumerate(clientes) if c["id"]==mov["cliente_id"]),0)
             cl_def = idx
         cl_sel = c4.selectbox("🏢 Cliente/Proveedor", cl_opts,
                                index=cl_def, key=f"{key_prefix}_cl")
@@ -184,15 +145,12 @@ def form_movemento(
                                index=al_def, key=f"{key_prefix}_al")
         al_v = "" if al_sel.startswith("—") else al_sel
 
-        not_v = st.text_area("📌 Notas",
-                             value=mov.get("notas", "") if mov else "",
+        not_v = st.text_area("📌 Notas", value=mov.get("notas","") if mov else "",
                              key=f"{key_prefix}_not", height=55)
 
         cs, cd = st.columns([3, 1])
-        submitted = cs.form_submit_button(
-            "💾 Gardar", use_container_width=True, type="primary")
-        del_btn = (cd.form_submit_button("🗑️ Eliminar", use_container_width=True)
-                   if mov else False)
+        submitted = cs.form_submit_button("💾 Gardar", use_container_width=True, type="primary")
+        del_btn   = (cd.form_submit_button("🗑️ Eliminar", use_container_width=True) if mov else False)
 
         if submitted:
             if not con_v.strip():
@@ -200,12 +158,12 @@ def form_movemento(
             periodo_auto = fecha_to_trimestre(str(data_v))
             payload = {
                 "area": area, "ano": ano_act, "curso_id": cur_id_v,
+                "partida_curso_id": part_cur_id if xust_v else None,
                 "tipo": tipo_v, "data": str(data_v), "importe": imp_v,
                 "concepto": con_v.strip().upper(), "codigo": cod_v,
-                "cod_desc": cod_d, "periodo": periodo_auto,
-                "notas": not_v, "categoria": cat_v,
-                "xustifica": xust_v, "alumno_neae": al_v,
-                "cliente_id": cl_id_v,
+                "cod_desc": cod_d, "periodo": periodo_auto, "notas": not_v,
+                "categoria": cat_v, "xustifica": xust_v,
+                "alumno_neae": al_v, "cliente_id": cl_id_v,
             }
             if mov and mov.get("id"):
                 payload["id"] = mov["id"]
@@ -217,8 +175,6 @@ def form_movemento(
             return True
 
         if del_btn and mov and mov.get("id"):
-            delete_diario(mov["id"])
-            st.success("🗑️ Eliminado")
-            return True
+            delete_diario(mov["id"]); st.success("🗑️ Eliminado"); return True
 
     return False

@@ -1,7 +1,6 @@
 """
 db/schema.py
 Definición completa del esquema y migraciones seguras.
-Para añadir una nueva tabla: añadir aquí y en _run_migrations().
 """
 from .connection import get_con
 
@@ -74,30 +73,32 @@ CREATE TABLE IF NOT EXISTS saldos (
 );
 
 CREATE TABLE IF NOT EXISTS diario (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    area        TEXT    NOT NULL CHECK(area IN ('func','com')),
-    ano         INTEGER NOT NULL REFERENCES anos(ano),
-    curso_id    INTEGER REFERENCES cursos(id),
-    num         INTEGER NOT NULL DEFAULT 0,
-    data        TEXT    NOT NULL,
-    tipo        TEXT    NOT NULL CHECK(tipo IN ('G','I')),
-    importe     REAL    NOT NULL CHECK(importe > 0),
-    concepto    TEXT    NOT NULL,
-    codigo      TEXT    NOT NULL DEFAULT '',
-    cod_desc    TEXT    NOT NULL DEFAULT '',
-    periodo     TEXT    NOT NULL DEFAULT '',
-    notas       TEXT    NOT NULL DEFAULT '',
-    categoria   TEXT    NOT NULL DEFAULT '',
-    xustifica   TEXT    NOT NULL DEFAULT '',
-    alumno_neae TEXT    NOT NULL DEFAULT '',
-    cliente_id  INTEGER REFERENCES clientes(id),
-    creado_en   TEXT    NOT NULL DEFAULT (datetime('now'))
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    area             TEXT    NOT NULL CHECK(area IN ('func','com')),
+    ano              INTEGER NOT NULL REFERENCES anos(ano),
+    curso_id         INTEGER REFERENCES cursos(id),
+    partida_curso_id INTEGER REFERENCES cursos(id),
+    num              INTEGER NOT NULL DEFAULT 0,
+    data             TEXT    NOT NULL,
+    tipo             TEXT    NOT NULL CHECK(tipo IN ('G','I')),
+    importe          REAL    NOT NULL CHECK(importe > 0),
+    concepto         TEXT    NOT NULL,
+    codigo           TEXT    NOT NULL DEFAULT '',
+    cod_desc         TEXT    NOT NULL DEFAULT '',
+    periodo          TEXT    NOT NULL DEFAULT '',
+    notas            TEXT    NOT NULL DEFAULT '',
+    categoria        TEXT    NOT NULL DEFAULT '',
+    xustifica        TEXT    NOT NULL DEFAULT '',
+    alumno_neae      TEXT    NOT NULL DEFAULT '',
+    cliente_id       INTEGER REFERENCES clientes(id),
+    creado_en        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_diario_ano_area ON diario(ano, area);
-CREATE INDEX IF NOT EXISTS idx_diario_curso    ON diario(curso_id);
-CREATE INDEX IF NOT EXISTS idx_diario_cliente  ON diario(cliente_id);
-CREATE INDEX IF NOT EXISTS idx_diario_data     ON diario(data);
+CREATE INDEX IF NOT EXISTS idx_diario_ano_area        ON diario(ano, area);
+CREATE INDEX IF NOT EXISTS idx_diario_curso           ON diario(curso_id);
+CREATE INDEX IF NOT EXISTS idx_diario_partida_curso   ON diario(partida_curso_id);
+CREATE INDEX IF NOT EXISTS idx_diario_cliente         ON diario(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_diario_data            ON diario(data);
 """
 
 DATOS_INICIALES = {
@@ -140,53 +141,62 @@ DATOS_INICIALES = {
     ],
 }
 
-# Migraciones: columnas añadidas en versiones posteriores
-# Formato: (tabla, columna, definición_sql)
 MIGRATIONS = [
-    ("clientes",     "direccion",    "TEXT NOT NULL DEFAULT ''"),
-    ("alumnos_neae", "curso_id",     "INTEGER REFERENCES cursos(id)"),
-    ("alumnos_neae", "importe_beca", "REAL NOT NULL DEFAULT 0"),
-    ("diario",       "ano",          "INTEGER NOT NULL DEFAULT 2026"),
-    ("diario",       "curso_id",     "INTEGER REFERENCES cursos(id)"),
+    ("clientes",     "direccion",         "TEXT NOT NULL DEFAULT ''"),
+    ("alumnos_neae", "curso_id",          "INTEGER REFERENCES cursos(id)"),
+    ("alumnos_neae", "importe_beca",      "REAL NOT NULL DEFAULT 0"),
+    ("diario",       "ano",               "INTEGER NOT NULL DEFAULT 2026"),
+    ("diario",       "curso_id",          "INTEGER REFERENCES cursos(id)"),
+    # ★ Nueva columna: curso al que pertenece la partida asignada
+    ("diario",       "partida_curso_id",  "INTEGER REFERENCES cursos(id)"),
 ]
 
 
 def init_db():
-    """Crea las tablas, aplica migraciones e inserta datos por defecto."""
     con = get_con()
     cur = con.cursor()
     cur.executescript(DDL)
-
     _run_migrations(con)
     _seed_data(con)
-
+    # ★ Rellenar partida_curso_id en registros existentes:
+    # Si tiene xustifica y curso_id, buscar la partida en ese mismo curso
+    _backfill_partida_curso_id(con)
     con.commit()
     con.close()
 
 
 def _run_migrations(con):
-    """Añade columnas nuevas a tablas existentes de forma segura."""
     for tbl, col, dfn in MIGRATIONS:
         try:
             con.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {dfn}")
         except Exception:
-            pass  # columna ya existe
+            pass
+
+
+def _backfill_partida_curso_id(con):
+    """
+    Para registros existentes sin partida_curso_id:
+    asigna el curso_id del movimiento como partida_curso_id
+    (asunción conservadora: la partida es del mismo curso que el movimiento).
+    """
+    con.execute("""
+        UPDATE diario
+        SET partida_curso_id = curso_id
+        WHERE partida_curso_id IS NULL
+          AND xustifica != ''
+          AND curso_id IS NOT NULL
+    """)
 
 
 def _seed_data(con):
-    """Inserta datos por defecto solo si no existen."""
     for k, v in DATOS_INICIALES["configuracion"]:
         con.execute("INSERT OR IGNORE INTO configuracion VALUES (?,?)", (k, v))
-
     for a in DATOS_INICIALES["anos"]:
         con.execute("INSERT OR IGNORE INTO anos VALUES (?)", (a,))
-
     for ano, area, saldo in DATOS_INICIALES["saldos"]:
         con.execute("INSERT OR IGNORE INTO saldos VALUES (?,?,?)", (ano, area, saldo))
-
     for nome in DATOS_INICIALES["cursos"]:
         con.execute("INSERT OR IGNORE INTO cursos (nome) VALUES (?)", (nome,))
-
     for codigo, desc, orden in DATOS_INICIALES["codigos"]:
         con.execute(
             "INSERT OR IGNORE INTO codigos (codigo,descripcion,orden) VALUES (?,?,?)",
