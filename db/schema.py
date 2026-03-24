@@ -102,7 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_diario_data            ON diario(data);
 
 DATOS_INICIALES = {
     "configuracion": [
-        ("ano_activo",       ""),
+        ("ano_activo",       "2026"),
         ("centro_nome",      "Centro Educativo"),
         ("centro_direccion", ""),
         ("centro_nif",       ""),
