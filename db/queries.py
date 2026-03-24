@@ -11,7 +11,14 @@ def get_cfg(clave: str, default: str = "") -> str:
     return r["valor"] if r else default
 
 def get_ano_activo() -> int:
-    return int(get_cfg("ano_activo", "2026"))
+    """Devuelve el año activo guardado en config.
+    Si no hay ninguno configurado, devuelve el año más reciente de la BD."""
+    val = get_cfg("ano_activo", "")
+    if val:
+        return int(val)
+    # Fallback: año más alto disponible
+    r = q1("SELECT MAX(ano) as ano FROM anos")
+    return int(r["ano"]) if r and r["ano"] else 2026
 
 def get_anos() -> list[int]:
     return [r["ano"] for r in q("SELECT ano FROM anos ORDER BY ano")]
