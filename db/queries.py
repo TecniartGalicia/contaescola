@@ -11,12 +11,7 @@ def get_cfg(clave: str, default: str = "") -> str:
     return r["valor"] if r else default
 
 def get_ano_activo() -> int:
-    """Devuelve el año actual del sistema si existe en BD, si no el más alto."""
-    from datetime import datetime
-    ano_actual = datetime.now().year
-    anos = [r["ano"] for r in q("SELECT ano FROM anos ORDER BY ano")]
-    if not anos: return ano_actual
-    return ano_actual if ano_actual in anos else max(anos)
+    return int(get_cfg("ano_activo", "2026"))
 
 def get_anos() -> list[int]:
     return [r["ano"] for r in q("SELECT ano FROM anos ORDER BY ano")]
