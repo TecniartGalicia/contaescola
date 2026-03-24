@@ -30,24 +30,71 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
     ano_act  = get_ano_activo()
 
     if not cursos:
-        st.warning("Non hai cursos creados. Ve a Tablas Maestras.")
+        st.warning("Non hai cursos creados. Ve a ⚙️ Tablas Maestras.")
         return False
 
     cur_names = [c["nome"] for c in cursos]
 
-    # ── Paso 1: Curso do movemento ─────────────────────────────────
+    # ── Paso 1: Curso do movemento (fóra do form → reactivo) ───────
     st.markdown("**🎓 Paso 1 — Curso Escolar do movemento**")
     if mov:
-        cur_def = next((i for i, c in enumerate(cursos) if c["id"] == mov.get("curso_id")), 0)
+        cur_def = next((i for i, c in enumerate(cursos)
+                        if c["id"] == mov.get("curso_id")), 0)
     else:
         ultimo = _get_ultimo_curso_id(area)
-        cur_def = next((i for i, c in enumerate(cursos) if c["id"] == ultimo), 0)
+        cur_def = next((i for i, c in enumerate(cursos)
+                        if c["id"] == ultimo), 0)
 
     cur_pre  = st.selectbox("Curso escolar do movemento *", cur_names,
                              index=cur_def, key=f"{key_prefix}_pre_cur")
     cur_id_v = next((c["id"] for c in cursos if c["nome"] == cur_pre), None)
 
-    # ── Paso 2: Datos do movemento ─────────────────────────────────
+    # ── Paso 1b: Curso da partida (fóra do form → reactivo) ────────
+    st.markdown("**📋 Partida Finalista** *(selecciona o curso e a partida)*")
+
+    # Índice por defecto para el curso de la partida
+    if mov and mov.get("partida_curso_id"):
+        part_cur_def = next((i for i, c in enumerate(cursos)
+                             if c["id"] == mov["partida_curso_id"]), cur_def)
+    else:
+        part_cur_def = cur_def  # por defecto mismo curso que el movimiento
+
+    col_pc1, col_pc2 = st.columns([1, 2])
+    part_cur_sel = col_pc1.selectbox(
+        "Curso da partida",
+        cur_names,
+        index=part_cur_def,
+        key=f"{key_prefix}_part_cur",
+        help="Cámbialo para asignar a unha partida doutro curso",
+    )
+    part_cur_id = next((c["id"] for c in cursos if c["nome"] == part_cur_sel), None)
+
+    # Cargar partidas del curso seleccionado (reactivo porque está fuera del form)
+    pcs    = get_partidas_config(part_cur_id) if part_cur_id else []
+    p_opts = ["— Sen partida —"] + [p["nome"] for p in pcs]
+    p_def  = 0
+    if mov and mov.get("xustifica") and mov["xustifica"] in p_opts:
+        p_def = p_opts.index(mov["xustifica"])
+
+    xust_pre = col_pc2.selectbox(
+        f"Partida ({len(pcs)} dispoñibles en '{part_cur_sel}')",
+        p_opts,
+        index=p_def,
+        key=f"{key_prefix}_xust_pre",
+    )
+    xust_v = "" if xust_pre.startswith("—") else xust_pre
+
+    if part_cur_id != cur_id_v and xust_v:
+        st.markdown(
+            "<div style='background:#fef3c7;border:1px solid #fcd34d;"
+            "border-radius:6px;padding:4px 10px;font-size:11px;color:#92400e;"
+            "margin-bottom:8px;'>⚠️ Esta partida pertence ao curso "
+            f"<strong>{part_cur_sel}</strong>, diferente ao curso do movemento "
+            f"<strong>{cur_pre}</strong></div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Paso 2: Datos do movemento (dentro do form) ────────────────
     st.markdown("**📝 Paso 2 — Datos do movemento**")
     with st.form(key=f"{key_prefix}_form"):
         tipo = st.radio("Tipo *", ["G — Gasto / Debe", "I — Ingreso / Haber"],
@@ -67,43 +114,6 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
         con_v = st.text_input("📝 Concepto *",
             value=mov.get("concepto","") if mov else "",
             key=f"{key_prefix}_con")
-
-        # ── Partida: curso + partida en paralelo ───────────────────
-        st.markdown("**📋 Partida Finalista**")
-        pc1, pc2 = st.columns(2)
-
-        # Curso de la partida — por defecto el mismo del movimiento
-        part_cur_def = cur_def
-        if mov and mov.get("partida_curso_id"):
-            idx = next((i for i, c in enumerate(cursos)
-                        if c["id"] == mov["partida_curso_id"]), cur_def)
-            part_cur_def = idx
-
-        part_cur_sel = pc1.selectbox(
-            "Curso da partida",
-            cur_names,
-            index=part_cur_def,
-            key=f"{key_prefix}_part_cur",
-            help="Por defecto o mesmo curso do movemento. Cámbialo para asignar a unha partida doutro curso.",
-        )
-        part_cur_id = next((c["id"] for c in cursos if c["nome"] == part_cur_sel), None)
-
-        if part_cur_id != cur_id_v:
-            pc1.markdown(
-                "<div style='background:#fef3c7;border:1px solid #fcd34d;"
-                "border-radius:6px;padding:4px 8px;font-size:11px;color:#92400e;'>"
-                "⚠️ Partida de curso diferente ao movemento</div>",
-                unsafe_allow_html=True)
-
-        pcs    = get_partidas_config(part_cur_id) if part_cur_id else []
-        p_opts = ["— Sen partida —"] + [p["nome"] for p in pcs]
-        p_def  = 0
-        if mov and mov.get("xustifica") and mov["xustifica"] in p_opts:
-            p_def = p_opts.index(mov["xustifica"])
-        xust_sel = pc2.selectbox(
-            f"Partida ({len(pcs)} en '{part_cur_sel}')",
-            p_opts, index=p_def, key=f"{key_prefix}_xust")
-        xust_v = "" if xust_sel.startswith("—") else xust_sel
 
         c3, c4 = st.columns(2)
         if area == "func":
@@ -130,7 +140,8 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
             for c in clientes]
         cl_def = 0
         if mov and mov.get("cliente_id"):
-            idx = next((i+1 for i,c in enumerate(clientes) if c["id"]==mov["cliente_id"]),0)
+            idx = next((i+1 for i,c in enumerate(clientes)
+                        if c["id"]==mov["cliente_id"]), 0)
             cl_def = idx
         cl_sel = c4.selectbox("🏢 Cliente/Proveedor", cl_opts,
                                index=cl_def, key=f"{key_prefix}_cl")
@@ -145,19 +156,23 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
                                index=al_def, key=f"{key_prefix}_al")
         al_v = "" if al_sel.startswith("—") else al_sel
 
-        not_v = st.text_area("📌 Notas", value=mov.get("notas","") if mov else "",
+        not_v = st.text_area("📌 Notas",
+                             value=mov.get("notas","") if mov else "",
                              key=f"{key_prefix}_not", height=55)
 
         cs, cd = st.columns([3, 1])
-        submitted = cs.form_submit_button("💾 Gardar", use_container_width=True, type="primary")
-        del_btn   = (cd.form_submit_button("🗑️ Eliminar", use_container_width=True) if mov else False)
+        submitted = cs.form_submit_button("💾 Gardar",
+                                          use_container_width=True, type="primary")
+        del_btn   = (cd.form_submit_button("🗑️ Eliminar", use_container_width=True)
+                     if mov else False)
 
         if submitted:
             if not con_v.strip():
                 st.error("Concepto obrigatorio"); return False
             periodo_auto = fecha_to_trimestre(str(data_v))
             payload = {
-                "area": area, "ano": ano_act, "curso_id": cur_id_v,
+                "area": area, "ano": ano_act,
+                "curso_id": cur_id_v,
                 "partida_curso_id": part_cur_id if xust_v else None,
                 "tipo": tipo_v, "data": str(data_v), "importe": imp_v,
                 "concepto": con_v.strip().upper(), "codigo": cod_v,
@@ -168,7 +183,7 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
             if mov and mov.get("id"):
                 payload["id"] = mov["id"]
             save_diario(payload)
-            msg = f"✅ Gardado! Curso: **{cur_pre}** · Período: **{periodo_auto}**"
+            msg = f"✅ Gardado! Curso mov: **{cur_pre}** · Período: **{periodo_auto}**"
             if part_cur_id != cur_id_v and xust_v:
                 msg += f" · Partida de **{part_cur_sel}**"
             st.success(msg)
