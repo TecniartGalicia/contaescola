@@ -12,6 +12,7 @@ def get_cfg(clave: str, default: str = "") -> str:
 
 def get_ano_activo() -> int:
 <<<<<<< HEAD
+<<<<<<< HEAD
     """Devuelve el año actual del sistema.
     Si ese año no existe en la BD, devuelve el año más alto disponible."""
     from datetime import datetime
@@ -22,6 +23,9 @@ def get_ano_activo() -> int:
     if ano_actual in anos:
         return ano_actual
     return max(anos)
+=======
+    return int(get_cfg("ano_activo", "2026"))
+>>>>>>> parent of a13f90c (AÑO ACTUAL)
 =======
     return int(get_cfg("ano_activo", "2026"))
 >>>>>>> parent of a13f90c (AÑO ACTUAL)
