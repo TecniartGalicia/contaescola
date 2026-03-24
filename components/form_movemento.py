@@ -13,12 +13,11 @@ from db import (
     save_diario, delete_diario,
 )
 from db.connection import q1
-from db.schema import PERIODOS, CATEGORIAS_COM
+from db.schema import CATEGORIAS_COM
 from utils import fecha_to_trimestre
 
 
 def _get_ultimo_curso_id(area: str) -> int | None:
-    """Devuelve el curso_id del último movimiento grabado en esa área."""
     r = q1(
         "SELECT curso_id FROM diario WHERE area=? AND curso_id IS NOT NULL "
         "ORDER BY id DESC LIMIT 1",
@@ -44,52 +43,26 @@ def form_movemento(
 
     cur_names = [c["nome"] for c in cursos]
 
-    # ── Paso 1: Curso (fuera del form → reactivo) ──────────────────
-    st.markdown("**🎓 Paso 1 — Curso Escolar**")
+    # ── Paso 1: Curso do movemento ─────────────────────────────────
+    st.markdown("**🎓 Paso 1 — Curso Escolar do movemento**")
 
-    # Calcular índice por defecto
     if mov:
-        # Edición → curso del movimiento
         cur_def = next(
             (i for i, c in enumerate(cursos) if c["id"] == mov.get("curso_id")), 0
         )
     else:
-        # Nuevo → curso del último movimiento grabado en esta área
         ultimo_curso_id = _get_ultimo_curso_id(area)
         cur_def = next(
             (i for i, c in enumerate(cursos) if c["id"] == ultimo_curso_id), 0
         )
 
-    col_cur, col_info = st.columns([3, 1])
-    cur_pre = col_cur.selectbox(
-        "Curso escolar *",
-        cur_names,
-        index=cur_def,
-        key=f"{key_prefix}_pre_cur",
-        help="Podes seleccionar calquera curso para asignar o movemento e as súas partidas",
+    cur_pre = st.selectbox(
+        "Curso escolar do movemento *", cur_names,
+        index=cur_def, key=f"{key_prefix}_pre_cur",
     )
     cur_id_v = next((c["id"] for c in cursos if c["nome"] == cur_pre), None)
 
-    # Indicador visual si el curso seleccionado es distinto al "actual"
-    # (el último usado o el del movimiento que se edita)
-    ultimo_curso_id = _get_ultimo_curso_id(area) if not mov else mov.get("curso_id")
-    if cur_id_v and cur_id_v != ultimo_curso_id and not mov:
-        col_info.markdown(
-            "<div style='background:#fef3c7;border:1px solid #fcd34d;"
-            "border-radius:6px;padding:6px 10px;font-size:11px;color:#92400e;"
-            "margin-top:22px;text-align:center;'>⚠️ Curso<br>diferente</div>",
-            unsafe_allow_html=True
-        )
-    else:
-        col_info.markdown("&nbsp;", unsafe_allow_html=True)
-
-    pcs = get_partidas_config(cur_id_v) if cur_id_v else []
-    if pcs:
-        st.caption(f"✅ {len(pcs)} partidas dispoñibles para **'{cur_pre}'**")
-    else:
-        st.caption(f"ℹ️ Sen partidas en '{cur_pre}' — engádeas en ⚙️ Tablas Maestras")
-
-    # ── Paso 2: Datos del movimiento ───────────────────────────────
+    # ── Paso 2: Datos do movemento ─────────────────────────────────
     st.markdown("**📝 Paso 2 — Datos do movemento**")
     with st.form(key=f"{key_prefix}_form"):
         tipo = st.radio(
@@ -119,13 +92,50 @@ def form_movemento(
             key=f"{key_prefix}_con",
         )
 
-        # Partidas del curso seleccionado arriba
+        # ── Partida: dos selectores en paralelo ────────────────────
+        # Selector 1: curso de la partida (independiente del curso del movimiento)
+        # Selector 2: partidas del curso seleccionado en selector 1
+        st.markdown("**📋 Partida Finalista**")
+        pc1, pc2 = st.columns(2)
+
+        # Curso de la partida — por defecto el mismo del movimiento
+        # Si editamos, usar el curso de la partida existente si es diferente
+        part_cur_def = cur_def  # por defecto mismo curso que el movimiento
+        if mov and mov.get("xustifica"):
+            # Buscar en qué curso está esa partida
+            for i, c in enumerate(cursos):
+                pcs_check = get_partidas_config(c["id"])
+                if any(p["nome"] == mov["xustifica"] for p in pcs_check):
+                    part_cur_def = i
+                    break
+
+        part_cur_sel = pc1.selectbox(
+            "Curso da partida",
+            cur_names,
+            index=part_cur_def,
+            key=f"{key_prefix}_part_cur",
+            help="Por defecto o mesmo curso do movemento. Cámbialo para asignar a unha partida doutro curso.",
+        )
+        part_cur_id = next((c["id"] for c in cursos if c["nome"] == part_cur_sel), None)
+
+        # Indicador si el curso de la partida es diferente al del movimiento
+        if part_cur_id != cur_id_v:
+            pc1.markdown(
+                "<div style='background:#fef3c7;border:1px solid #fcd34d;"
+                "border-radius:6px;padding:4px 8px;font-size:11px;color:#92400e;'>"
+                "⚠️ Partida de curso diferente ao movemento</div>",
+                unsafe_allow_html=True
+            )
+
+        # Partidas del curso seleccionado
+        pcs = get_partidas_config(part_cur_id) if part_cur_id else []
         p_opts = ["— Sen partida —"] + [p["nome"] for p in pcs]
         p_def  = 0
         if mov and mov.get("xustifica") and mov["xustifica"] in p_opts:
             p_def = p_opts.index(mov["xustifica"])
-        xust_sel = st.selectbox(
-            f"📋 Partida Finalista — {cur_pre} ({len(pcs)} dispoñibles)",
+
+        xust_sel = pc2.selectbox(
+            f"Partida ({len(pcs)} en '{part_cur_sel}')",
             p_opts, index=p_def, key=f"{key_prefix}_xust",
         )
         xust_v = "" if xust_sel.startswith("—") else xust_sel
@@ -200,7 +210,10 @@ def form_movemento(
             if mov and mov.get("id"):
                 payload["id"] = mov["id"]
             save_diario(payload)
-            st.success(f"✅ Gardado! Curso: **{cur_pre}** · Período: **{periodo_auto}**")
+            msg = f"✅ Gardado! Curso: **{cur_pre}** · Período: **{periodo_auto}**"
+            if part_cur_id != cur_id_v and xust_v:
+                msg += f" · Partida de **{part_cur_sel}**"
+            st.success(msg)
             return True
 
         if del_btn and mov and mov.get("id"):
