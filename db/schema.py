@@ -176,16 +176,19 @@ def _run_migrations(con):
 def _backfill_partida_curso_id(con):
     """
     Para registros existentes sin partida_curso_id:
-    asigna el curso_id del movimiento como partida_curso_id
-    (asunción conservadora: la partida es del mismo curso que el movimiento).
+    asigna el curso_id del movimiento como partida_curso_id.
+    Usa try/except por si la columna aún no existe en la BD.
     """
-    con.execute("""
-        UPDATE diario
-        SET partida_curso_id = curso_id
-        WHERE partida_curso_id IS NULL
-          AND xustifica != ''
-          AND curso_id IS NOT NULL
-    """)
+    try:
+        con.execute("""
+            UPDATE diario
+            SET partida_curso_id = curso_id
+            WHERE partida_curso_id IS NULL
+              AND xustifica != ''
+              AND curso_id IS NOT NULL
+        """)
+    except Exception:
+        pass  # columna aún no existe, se creará en la siguiente migración
 
 
 def _seed_data(con):
