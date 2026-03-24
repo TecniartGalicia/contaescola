@@ -11,10 +11,14 @@ def get_cfg(clave: str, default: str = "") -> str:
     return r["valor"] if r else default
 
 def get_ano_activo() -> int:
-    """Devuelve siempre el año más reciente disponible en la BD.
-    Así al cargar la app siempre arranca en el año en vigor."""
-    r = q1("SELECT MAX(ano) as ano FROM anos")
-    return int(r["ano"]) if r and r["ano"] else 2026
+    """Devuelve el año activo guardado en configuracion.
+    Si está vacío o desactualizado, usa MAX(ano) de la BD."""
+    val = get_cfg("ano_activo", "")
+    r   = q1("SELECT MAX(ano) as ano FROM anos")
+    max_ano = int(r["ano"]) if r and r["ano"] else 2026
+    if not val:
+        return max_ano
+    return int(val)
 
 def get_anos() -> list[int]:
     return [r["ano"] for r in q("SELECT ano FROM anos ORDER BY ano")]
