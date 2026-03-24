@@ -96,7 +96,6 @@ CREATE TABLE IF NOT EXISTS diario (
 
 CREATE INDEX IF NOT EXISTS idx_diario_ano_area        ON diario(ano, area);
 CREATE INDEX IF NOT EXISTS idx_diario_curso           ON diario(curso_id);
-CREATE INDEX IF NOT EXISTS idx_diario_partida_curso   ON diario(partida_curso_id);
 CREATE INDEX IF NOT EXISTS idx_diario_cliente         ON diario(cliente_id);
 CREATE INDEX IF NOT EXISTS idx_diario_data            ON diario(data);
 """
@@ -149,6 +148,9 @@ MIGRATIONS = [
     ("diario",       "curso_id",          "INTEGER REFERENCES cursos(id)"),
     # ★ Nueva columna: curso al que pertenece la partida asignada
     ("diario",       "partida_curso_id",  "INTEGER REFERENCES cursos(id)"),
+    # Índice para partida_curso_id — se crea tras la migración de la columna
+    ("_index", "idx_diario_partida_curso",
+     "CREATE INDEX IF NOT EXISTS idx_diario_partida_curso ON diario(partida_curso_id)"),
 ]
 
 
