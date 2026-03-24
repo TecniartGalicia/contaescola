@@ -81,39 +81,88 @@ def render() -> None:
             st.warning("Primeiro crea un curso escolar na pestaña anterior")
             return
 
+        # Filtro por curso
         cf    = st.selectbox("Filtrar por curso", ["Todos"] + [c["nome"] for c in cursos],
                              key="mp_cf")
         cid_f = next((c["id"] for c in cursos if c["nome"] == cf), None)
         pf    = [p for p in pcs if not cid_f or p["curso_id"] == cid_f]
 
+        # Tabla resumen
         if pf:
             st.dataframe(pd.DataFrame([{
-                "Curso":       p["curso_nome"],
-                "Partida":     p["nome"],
-                "Asignado €":  p["importe_asignado"],
-                "Notas":       p["notas"],
+                "Curso":      p["curso_nome"],
+                "Partida":    p["nome"],
+                "Asignado €": p["importe_asignado"],
+                "Notas":      p["notas"],
             } for p in pf]), use_container_width=True, hide_index=True)
 
-            do = ["— Seleccionar —"] + [f"{p['curso_nome']} — {p['nome']}" for p in pf]
-            ds = st.selectbox("Eliminar partida", do, key="del_part")
-            if ds != "— Seleccionar —" and st.button("🗑️ Confirmar eliminación", key="conf_dp"):
-                delete_partida(pf[do.index(ds)-1]["id"])
-                st.success("Eliminada"); st.rerun()
+        st.divider()
 
-        with st.form("np_form"):
-            st.subheader("➕ Nova partida")
-            co = [c["nome"] for c in cursos]
+        # ── Editar / Crear partida ─────────────────────────────────
+        opts_edit = ["— Nova partida —"] + [
+            f"{p['curso_nome']} — {p['nome']}" for p in pf
+        ]
+        sel_edit = st.selectbox("Editar ou crear partida", opts_edit, key="part_edit_sel")
+        pe = None if sel_edit.startswith("—") else pf[opts_edit.index(sel_edit) - 1]
+
+        with st.form("part_form"):
+            if pe:
+                st.caption(f"Editando: **{pe['nome']}** · Curso: {pe['curso_nome']}")
+            else:
+                st.caption("Nova partida")
+
             c1, c2 = st.columns(2)
-            cs3  = c1.selectbox("Curso *", co)
-            nome = c2.text_input("Nome da partida *", placeholder="Ex: BECAS NEAE")
+
+            # Curso — solo editable al crear, no al editar
+            cur_names = [c["nome"] for c in cursos]
+            if pe:
+                # Al editar mostramos el curso pero no es editable
+                c1.text_input("Curso", value=pe["curso_nome"], disabled=True)
+                curso_sel = pe["curso_nome"]
+            else:
+                curso_sel = c1.selectbox("Curso *", cur_names, key="part_form_cur")
+
+            nome_val = c2.text_input(
+                "Nome da partida *",
+                value=pe["nome"] if pe else "",
+                placeholder="Ex: BECAS NEAE",
+            )
+
             c3, c4 = st.columns(2)
-            imp   = c3.number_input("Importe asignado €", min_value=0.0, step=0.01)
-            notas = c4.text_input("Notas")
-            if st.form_submit_button("➕ Engadir partida", type="primary"):
-                if not nome.strip():
+            imp_val = c3.number_input(
+                "Importe asignado €",
+                min_value=0.0, step=0.01,
+                value=float(pe["importe_asignado"]) if pe else 0.0,
+            )
+            notas_val = c4.text_input(
+                "Notas",
+                value=pe["notas"] if pe else "",
+            )
+
+            cs_b, cd_b = st.columns([3, 1])
+            sv = cs_b.form_submit_button(
+                "💾 Gardar", type="primary", use_container_width=True)
+            dl = cd_b.form_submit_button(
+                "🗑️ Eliminar", use_container_width=True) if pe else False
+
+            if sv:
+                if not nome_val.strip():
                     st.error("Nome obrigatorio")
                 else:
-                    cid2 = next(c["id"] for c in cursos if c["nome"] == cs3)
-                    save_partida({"curso_id": cid2, "nome": nome.strip(),
-                                  "importe_asignado": imp, "notas": notas})
-                    st.success(f"'{nome}' engadida!"); st.rerun()
+                    cid_sel = next(
+                        (c["id"] for c in cursos if c["nome"] == curso_sel), None
+                    )
+                    d = {
+                        "curso_id":        cid_sel,
+                        "nome":            nome_val.strip().upper(),
+                        "importe_asignado": imp_val,
+                        "notas":           notas_val,
+                    }
+                    if pe:
+                        d["id"] = pe["id"]
+                    save_partida(d)
+                    st.success(f"✅ '{nome_val}' gardada!"); st.rerun()
+
+            if dl and pe:
+                delete_partida(pe["id"])
+                st.success("🗑️ Eliminada"); st.rerun()
