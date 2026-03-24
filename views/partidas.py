@@ -45,11 +45,13 @@ def render(ano: int, cur_id: int | None) -> None:
         return
 
     # ── Totais globais ─────────────────────────────────────────────
-    total_asig = sum(p["importe_asignado"] for p in pcs)
-    total_gast = sum(res.get(p["nome"], {}).get("debe",  0.0) for p in pcs)
-    # ★ Si importe_asignado=0, usar el total de ingresos (haber) como asignado
-    total_ing  = sum(res.get(p["nome"], {}).get("haber", 0.0) for p in pcs)
-    total_real = total_asig if total_asig > 0 else total_ing
+    # ★ Para cada partida: se importe_asignado=0, usa os ingresos (haber) como asignado
+    total_real = sum(
+        p["importe_asignado"] if p["importe_asignado"] > 0
+        else res.get(p["nome"], {}).get("haber", 0.0)
+        for p in pcs
+    )
+    total_gast = sum(res.get(p["nome"], {}).get("debe", 0.0) for p in pcs)
     total_pend = total_real - total_gast
 
     c1, c2, c3 = st.columns(3)
