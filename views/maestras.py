@@ -1,18 +1,21 @@
 import re
+import bcrypt
 import streamlit as st
 import pandas as pd
 
 from db import (get_cursos, get_codigos, get_partidas_config,
                 save_curso, delete_curso, save_codigo, delete_codigo,
                 save_partida, delete_partida)
+from db.connection import q, mut
 
 
 def render() -> None:
     st.title("⚙️ Tablas Maestras")
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📅 Cursos Escolares",
         "🏷️ Códigos Contables",
         "📋 Partidas por Curso",
+        "👥 Usuarios",
     ])
 
     # ── Cursos ────────────────────────────────────────────────────
@@ -43,9 +46,8 @@ def render() -> None:
         cods = get_codigos(solo_activos=False)
         if cods:
             st.dataframe(pd.DataFrame([{
-                "Código":   c["codigo"],    "Descrición": c["descripcion"],
-                "Activo":   "✅" if c["activo"] else "❌",
-                "Orde":     c["orden"],
+                "Código":   c["codigo"], "Descrición": c["descripcion"],
+                "Activo":   "✅" if c["activo"] else "❌", "Orde": c["orden"],
             } for c in cods]), use_container_width=True, hide_index=True)
 
         eo = ["— Novo —"] + [f"{c['codigo']} — {c['descripcion']}" for c in cods]
@@ -57,8 +59,7 @@ def render() -> None:
             codigo = c1.text_input("Código *", value=ce["codigo"] if ce else "")
             orden  = c2.number_input("Orde", value=int(ce["orden"]) if ce else 99, step=1)
             desc   = st.text_input("Descrición *", value=ce["descripcion"] if ce else "")
-            act    = st.checkbox("Activo (visible en formularios)",
-                                 value=bool(ce["activo"]) if ce else True)
+            act    = st.checkbox("Activo", value=bool(ce["activo"]) if ce else True)
             cs2, cd2 = st.columns([3, 1])
             sv = cs2.form_submit_button("💾 Gardar", type="primary", use_container_width=True)
             dl = cd2.form_submit_button("🗑️ Eliminar", use_container_width=True) if ce else False
@@ -81,88 +82,144 @@ def render() -> None:
             st.warning("Primeiro crea un curso escolar na pestaña anterior")
             return
 
-        # Filtro por curso
         cf    = st.selectbox("Filtrar por curso", ["Todos"] + [c["nome"] for c in cursos],
                              key="mp_cf")
         cid_f = next((c["id"] for c in cursos if c["nome"] == cf), None)
         pf    = [p for p in pcs if not cid_f or p["curso_id"] == cid_f]
 
-        # Tabla resumen
         if pf:
             st.dataframe(pd.DataFrame([{
-                "Curso":      p["curso_nome"],
-                "Partida":    p["nome"],
-                "Asignado €": p["importe_asignado"],
-                "Notas":      p["notas"],
+                "Curso":      p["curso_nome"], "Partida": p["nome"],
+                "Asignado €": p["importe_asignado"], "Notas": p["notas"],
             } for p in pf]), use_container_width=True, hide_index=True)
 
         st.divider()
-
-        # ── Editar / Crear partida ─────────────────────────────────
         opts_edit = ["— Nova partida —"] + [
-            f"{p['curso_nome']} — {p['nome']}" for p in pf
-        ]
+            f"{p['curso_nome']} — {p['nome']}" for p in pf]
         sel_edit = st.selectbox("Editar ou crear partida", opts_edit, key="part_edit_sel")
-        pe = None if sel_edit.startswith("—") else pf[opts_edit.index(sel_edit) - 1]
+        pe = None if sel_edit.startswith("—") else pf[opts_edit.index(sel_edit)-1]
 
         with st.form("part_form"):
             if pe:
                 st.caption(f"Editando: **{pe['nome']}** · Curso: {pe['curso_nome']}")
             else:
                 st.caption("Nova partida")
-
             c1, c2 = st.columns(2)
-
-            # Curso — solo editable al crear, no al editar
             cur_names = [c["nome"] for c in cursos]
             if pe:
-                # Al editar mostramos el curso pero no es editable
                 c1.text_input("Curso", value=pe["curso_nome"], disabled=True)
                 curso_sel = pe["curso_nome"]
             else:
                 curso_sel = c1.selectbox("Curso *", cur_names, key="part_form_cur")
-
-            nome_val = c2.text_input(
-                "Nome da partida *",
-                value=pe["nome"] if pe else "",
-                placeholder="Ex: BECAS NEAE",
-            )
-
+            nome_val = c2.text_input("Nome da partida *",
+                value=pe["nome"] if pe else "", placeholder="Ex: BECAS NEAE")
             c3, c4 = st.columns(2)
-            imp_val = c3.number_input(
-                "Importe asignado €",
-                min_value=0.0, step=0.01,
-                value=float(pe["importe_asignado"]) if pe else 0.0,
-            )
-            notas_val = c4.text_input(
-                "Notas",
-                value=pe["notas"] if pe else "",
-            )
-
+            imp_val   = c3.number_input("Importe asignado €", min_value=0.0, step=0.01,
+                value=float(pe["importe_asignado"]) if pe else 0.0)
+            notas_val = c4.text_input("Notas", value=pe["notas"] if pe else "")
             cs_b, cd_b = st.columns([3, 1])
-            sv = cs_b.form_submit_button(
-                "💾 Gardar", type="primary", use_container_width=True)
-            dl = cd_b.form_submit_button(
-                "🗑️ Eliminar", use_container_width=True) if pe else False
-
+            sv = cs_b.form_submit_button("💾 Gardar", type="primary", use_container_width=True)
+            dl = cd_b.form_submit_button("🗑️ Eliminar", use_container_width=True) if pe else False
             if sv:
                 if not nome_val.strip():
                     st.error("Nome obrigatorio")
                 else:
-                    cid_sel = next(
-                        (c["id"] for c in cursos if c["nome"] == curso_sel), None
-                    )
-                    d = {
-                        "curso_id":        cid_sel,
-                        "nome":            nome_val.strip().upper(),
-                        "importe_asignado": imp_val,
-                        "notas":           notas_val,
-                    }
-                    if pe:
-                        d["id"] = pe["id"]
-                    save_partida(d)
-                    st.success(f"✅ '{nome_val}' gardada!"); st.rerun()
-
+                    cid_sel = next((c["id"] for c in cursos if c["nome"] == curso_sel), None)
+                    d = {"curso_id": cid_sel, "nome": nome_val.strip().upper(),
+                         "importe_asignado": imp_val, "notas": notas_val}
+                    if pe: d["id"] = pe["id"]
+                    save_partida(d); st.success(f"✅ '{nome_val}' gardada!"); st.rerun()
             if dl and pe:
-                delete_partida(pe["id"])
-                st.success("🗑️ Eliminada"); st.rerun()
+                delete_partida(pe["id"]); st.success("🗑️ Eliminada"); st.rerun()
+
+    # ── Usuarios ──────────────────────────────────────────────────
+    with tab4:
+        usuarios = q("SELECT id, username, nome, activo, creado_en FROM usuarios ORDER BY username")
+
+        if usuarios:
+            st.dataframe(pd.DataFrame([{
+                "Usuario":  u["username"],
+                "Nome":     u["nome"],
+                "Activo":   "✅" if u["activo"] else "❌",
+                "Creado":   u["creado_en"][:10] if u["creado_en"] else "",
+            } for u in usuarios]), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Editar / crear
+        opts_u = ["— Novo usuario —"] + [u["username"] for u in usuarios]
+        sel_u  = st.selectbox("Editar ou crear usuario", opts_u, key="usr_sel")
+        ue     = None if sel_u.startswith("—") else next(
+            (u for u in usuarios if u["username"] == sel_u), None)
+
+        with st.form("usr_form"):
+            if ue:
+                st.caption(f"Editando usuario: **{ue['username']}**")
+            else:
+                st.caption("Novo usuario")
+
+            c1, c2 = st.columns(2)
+            uname = c1.text_input("Usuario *",
+                value=ue["username"] if ue else "",
+                disabled=bool(ue),  # no se puede cambiar el username
+                placeholder="ex: maria")
+            nome_u = c2.text_input("Nome completo",
+                value=ue["nome"] if ue else "",
+                placeholder="ex: María García")
+
+            c3, c4 = st.columns(2)
+            pwd1 = c3.text_input(
+                "Contrasinal *" if not ue else "Nova contrasinal (deixar baleiro = non cambiar)",
+                type="password", placeholder="••••••••")
+            pwd2 = c4.text_input("Repetir contrasinal", type="password",
+                                  placeholder="••••••••")
+
+            activo_u = st.checkbox("Usuario activo", value=bool(ue["activo"]) if ue else True)
+
+            cs_u, cd_u = st.columns([3, 1])
+            sv_u = cs_u.form_submit_button("💾 Gardar", type="primary", use_container_width=True)
+            dl_u = cd_u.form_submit_button("🗑️ Eliminar", use_container_width=True) if ue else False
+
+            if sv_u:
+                # Validaciones
+                if not ue and not uname.strip():
+                    st.error("Nome de usuario obrigatorio"); st.stop()
+                if not ue and not pwd1:
+                    st.error("Contrasinal obrigatoria para novo usuario"); st.stop()
+                if pwd1 and pwd1 != pwd2:
+                    st.error("As contrasinais non coinciden"); st.stop()
+                if pwd1 and len(pwd1) < 4:
+                    st.error("A contrasinal debe ter polo menos 4 caracteres"); st.stop()
+
+                if ue:
+                    # Actualizar usuario existente
+                    if pwd1:
+                        pwd_hash = bcrypt.hashpw(pwd1.encode(), bcrypt.gensalt(12)).decode()
+                        mut("UPDATE usuarios SET nome=?, password=?, activo=? WHERE id=?",
+                            (nome_u, pwd_hash, 1 if activo_u else 0, ue["id"]))
+                    else:
+                        mut("UPDATE usuarios SET nome=?, activo=? WHERE id=?",
+                            (nome_u, 1 if activo_u else 0, ue["id"]))
+                    st.success(f"✅ Usuario '{ue['username']}' actualizado")
+                else:
+                    # Crear nuevo usuario
+                    pwd_hash = bcrypt.hashpw(pwd1.encode(), bcrypt.gensalt(12)).decode()
+                    existing = q("SELECT id FROM usuarios WHERE username=?",
+                                 (uname.lower().strip(),))
+                    if existing:
+                        st.error(f"O usuario '{uname}' xa existe")
+                    else:
+                        mut("INSERT INTO usuarios (username, nome, password, activo) VALUES (?,?,?,1)",
+                            (uname.lower().strip(), nome_u, pwd_hash))
+                        st.success(f"✅ Usuario '{uname}' creado!")
+                st.rerun()
+
+            if dl_u and ue:
+                # No permitir eliminar el propio usuario activo
+                if ue["username"] == st.session_state.get("username", ""):
+                    st.error("Non podes eliminar o teu propio usuario")
+                elif len(usuarios) <= 1:
+                    st.error("Debe existir polo menos un usuario")
+                else:
+                    mut("DELETE FROM usuarios WHERE id=?", (ue["id"],))
+                    st.success("🗑️ Usuario eliminado"); st.rerun()

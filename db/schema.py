@@ -57,8 +57,7 @@ CREATE TABLE IF NOT EXISTS alumnos_neae (
 
 CREATE TABLE IF NOT EXISTS partidas_config (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    curso_id         INTEGER NOT NULL
-                       REFERENCES cursos(id) ON DELETE CASCADE,
+    curso_id         INTEGER NOT NULL REFERENCES cursos(id) ON DELETE CASCADE,
     nome             TEXT    NOT NULL,
     importe_asignado REAL    NOT NULL DEFAULT 0,
     notas            TEXT    NOT NULL DEFAULT '',
@@ -70,6 +69,15 @@ CREATE TABLE IF NOT EXISTS saldos (
     area TEXT    NOT NULL CHECK(area IN ('func','com')),
     saldo_anterior REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (ano, area)
+);
+
+CREATE TABLE IF NOT EXISTS usuarios (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT    NOT NULL UNIQUE,
+    nome       TEXT    NOT NULL DEFAULT '',
+    password   TEXT    NOT NULL,
+    activo     INTEGER NOT NULL DEFAULT 1,
+    creado_en  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS diario (
@@ -94,15 +102,15 @@ CREATE TABLE IF NOT EXISTS diario (
     creado_en        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_diario_ano_area        ON diario(ano, area);
-CREATE INDEX IF NOT EXISTS idx_diario_curso           ON diario(curso_id);
-CREATE INDEX IF NOT EXISTS idx_diario_cliente         ON diario(cliente_id);
-CREATE INDEX IF NOT EXISTS idx_diario_data            ON diario(data);
+CREATE INDEX IF NOT EXISTS idx_diario_ano_area ON diario(ano, area);
+CREATE INDEX IF NOT EXISTS idx_diario_curso    ON diario(curso_id);
+CREATE INDEX IF NOT EXISTS idx_diario_cliente  ON diario(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_diario_data     ON diario(data);
 """
 
 DATOS_INICIALES = {
     "configuracion": [
-        ("ano_activo",       ""),
+        ("ano_activo",       "2026"),
         ("centro_nome",      "Centro Educativo"),
         ("centro_direccion", ""),
         ("centro_nif",       ""),
@@ -146,11 +154,7 @@ MIGRATIONS = [
     ("alumnos_neae", "importe_beca",      "REAL NOT NULL DEFAULT 0"),
     ("diario",       "ano",               "INTEGER NOT NULL DEFAULT 2026"),
     ("diario",       "curso_id",          "INTEGER REFERENCES cursos(id)"),
-    # ★ Nueva columna: curso al que pertenece la partida asignada
     ("diario",       "partida_curso_id",  "INTEGER REFERENCES cursos(id)"),
-    # Índice para partida_curso_id — se crea tras la migración de la columna
-    ("_index", "idx_diario_partida_curso",
-     "CREATE INDEX IF NOT EXISTS idx_diario_partida_curso ON diario(partida_curso_id)"),
 ]
 
 
@@ -160,8 +164,6 @@ def init_db():
     cur.executescript(DDL)
     _run_migrations(con)
     _seed_data(con)
-    # ★ Rellenar partida_curso_id en registros existentes:
-    # Si tiene xustifica y curso_id, buscar la partida en ese mismo curso
     _backfill_partida_curso_id(con)
     con.commit()
     con.close()
@@ -176,11 +178,6 @@ def _run_migrations(con):
 
 
 def _backfill_partida_curso_id(con):
-    """
-    Para registros existentes sin partida_curso_id:
-    asigna el curso_id del movimiento como partida_curso_id.
-    Usa try/except por si la columna aún no existe en la BD.
-    """
     try:
         con.execute("""
             UPDATE diario
@@ -190,7 +187,7 @@ def _backfill_partida_curso_id(con):
               AND curso_id IS NOT NULL
         """)
     except Exception:
-        pass  # columna aún no existe, se creará en la siguiente migración
+        pass
 
 
 def _seed_data(con):
@@ -206,4 +203,13 @@ def _seed_data(con):
         con.execute(
             "INSERT OR IGNORE INTO codigos (codigo,descripcion,orden) VALUES (?,?,?)",
             (codigo, desc, orden),
+        )
+    # Usuario inicial RAQUEL — solo si no existe ningún usuario
+    n = con.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+    if n == 0:
+        import bcrypt
+        pwd_hash = bcrypt.hashpw(b"mateo", bcrypt.gensalt(12)).decode()
+        con.execute(
+            "INSERT OR IGNORE INTO usuarios (username, nome, password, activo) VALUES (?,?,?,1)",
+            ("raquel", "Raquel", pwd_hash),
         )
