@@ -9,6 +9,7 @@ from db import init_db
 from db.connection import q, mut
 from components import render_sidebar
 from components.sidebar import render_loader, LOGO_B64
+from views.exportar import check_backup_automatico, render_backup_notificacion
 
 from views import (dashboard, diario, balance, partidas, becas,
                    informes, modelo_347, clientes, alumnos,
@@ -37,7 +38,6 @@ if "app_loaded" not in st.session_state:
     st.rerun()
 else:
     init_db()
-
 
 # ── LOGIN ───────────────────────────────────────────────────────
 def check_login(username: str, password: str) -> bool:
@@ -87,11 +87,19 @@ if not st.session_state.get("logged_in"):
     render_login()
     st.stop()
 
-# ── App principal (solo si está autenticado) ────────────────────
+# ── Backup automático — comprobar al arrancar ───────────────────
+if "backup_checked" not in st.session_state:
+    st.session_state["backup_checked"] = True
+    check_backup_automatico()
+
+# ── App principal ───────────────────────────────────────────────
 if "page" not in st.session_state:
     st.session_state["page"] = "dash"
 
 ano, cur_id = render_sidebar()
+
+# Notificación de backup automático (aparece en sidebar)
+render_backup_notificacion()
 
 page = st.session_state["page"]
 
