@@ -1,118 +1,175 @@
+import io
 import streamlit as st
 import pandas as pd
 
-from db import get_cursos, get_partidas_config, get_partidas_resumen
-from db.queries import get_diario_partida
+from db import (get_cursos, get_anos, get_partidas, get_movs_partida,
+                get_partidas_resumen_global)
 from utils import fmt, fmtD
+from utils.pdf import gen_pdf
+
+
+def _pdf_partida(p: dict, movs: list, filtro_label: str) -> bytes | None:
+    """Genera PDF de una partida con sus movimientos."""
+    total_ing  = sum(m["importe"] for m in movs if m["tipo"]=="I")
+    total_gast = sum(m["importe"] for m in movs if m["tipo"]=="G")
+    saldo_act  = p["saldo_inicial"] + total_ing - total_gast
+
+    subtitulo = (
+        f"Saldo inicial: {fmt(p['saldo_inicial'])} € | "
+        f"Ingresos: {fmt(total_ing)} € | "
+        f"Gastos: {fmt(total_gast)} € | "
+        f"Saldo actual: {fmt(saldo_act)} €"
+        + (f" | Filtro: {filtro_label}" if filtro_label != "Todos" else "")
+    )
+
+    cols = ["Data", "Ano", "Curso", "Área", "Concepto", "Cliente",
+            "Período", "Debe €", "Haber €"]
+    filas = []
+    for m in movs:
+        filas.append([
+            fmtD(m.get("data","")),
+            m.get("ano",""),
+            m.get("curso_nome",""),
+            "Func" if m.get("area")=="func" else "Com",
+            m.get("concepto",""),
+            m.get("cliente_nome","") or "",
+            m.get("periodo",""),
+            round(m["importe"],2) if m["tipo"]=="G" else None,
+            round(m["importe"],2) if m["tipo"]=="I" else None,
+        ])
+
+    totales = ["", "", "", "", "TOTAL", "",
+               "", fmt(total_gast), fmt(total_ing)]
+
+    pdf_bytes, err = gen_pdf(
+        title    = f"📋 Partida: {p['nome']}",
+        subtitulo= subtitulo,
+        columnas = cols,
+        filas    = filas,
+        totales  = totales,
+    )
+    return pdf_bytes
 
 
 def render(ano: int, cur_id: int | None) -> None:
     st.title("📋 Partidas Finalistas")
-    st.markdown(
-        '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;'
-        'padding:10px 14px;font-size:13px;color:#1e3a5f;margin-bottom:12px">'
-        'ℹ️ Os importes calcúlanse por <strong>curso escolar</strong>, non por ano natural. '
-        'Selecciona un curso para ver os totais reais da partida.</div>',
-        unsafe_allow_html=True,
-    )
 
-    cursos  = get_cursos()
-    cf_opts = ["— Selecciona un curso —"] + [c["nome"] for c in cursos]
-
-    cur_def = 0
-    if cur_id:
-        idx = next((i+1 for i, c in enumerate(cursos) if c["id"] == cur_id), 0)
-        cur_def = idx
-
-    cur_f = st.selectbox(
-        "📅 Curso escolar",
-        cf_opts,
-        index=cur_def,
-        key="part_cf",
-        help="Os importes suman TODOS os gastos do curso, independentemente do ano natural",
-    )
-
-    if cur_f.startswith("—"):
-        st.info("Selecciona un curso escolar para ver as partidas.")
+    partidas = get_partidas()
+    if not partidas:
+        st.info("Non hai partidas creadas. Ve a ⚙️ Tablas Maestras → Partidas para crealas.")
         return
 
-    cid_f = next((c["id"] for c in cursos if c["nome"] == cur_f), None)
-    pcs   = get_partidas_config(cid_f)
-    res   = get_partidas_resumen(ano, cid_f)
+    cursos = get_cursos()
+    anos   = get_anos()
 
-    if not pcs:
-        st.info("Non hai partidas configuradas para este curso. Ve a ⚙️ Tablas Maestras.")
+    # ── Selector de partida ────────────────────────────────────────
+    p_names = [p["nome"] for p in partidas]
+    p_sel   = st.selectbox("📋 Selecciona a partida", p_names, key="part_sel")
+    p       = next((x for x in partidas if x["nome"] == p_sel), None)
+    if not p:
         return
 
-    # ── Totais globais ─────────────────────────────────────────────
-    # ★ Para cada partida: se importe_asignado=0, usa os ingresos (haber) como asignado
-    total_real = sum(
-        p["importe_asignado"] if p["importe_asignado"] > 0
-        else res.get(p["nome"], {}).get("haber", 0.0)
-        for p in pcs
-    )
-    total_gast = sum(res.get(p["nome"], {}).get("debe", 0.0) for p in pcs)
-    total_pend = total_real - total_gast
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total asignado",  fmt(total_real))
-    c2.metric("Total gastado",   fmt(total_gast))
-    c3.metric("Total pendente" if total_pend >= 0 else "⚠️ EXCESO TOTAL",
-              fmt(abs(total_pend)))
     st.divider()
 
-    # ── Detalle por partida ────────────────────────────────────────
-    for p in pcs:
-        r      = res.get(p["nome"], {"debe": 0.0, "haber": 0.0})
-        debe   = r["debe"]
-        haber  = r["haber"]
+    # ── Filtros ────────────────────────────────────────────────────
+    col_f1, col_f2 = st.columns(2)
+    modo_filtro = col_f1.radio(
+        "Filtrar por",
+        ["Todos", "Curso escolar", "Ano natural"],
+        horizontal=True, key="part_filtro_modo",
+    )
 
-        # ★ Si importe_asignado=0 y hay ingresos, usar ingresos como asignado
-        asig   = p["importe_asignado"] if p["importe_asignado"] > 0 else haber
-        pend   = asig - debe
-        pct    = min(100, debe / asig * 100) if asig > 0 else 0
-        ico    = "🔴" if pct > 90 else "🟡" if pct > 70 else "🟢"
+    filtro_curso_id = None
+    filtro_ano      = None
+    filtro_label    = "Todos"
 
-        # Cabecera del expander con todos los datos visibles
-        header = (
-            f"{ico} **{p['nome']}** — "
-            f"Asignado: {fmt(asig)} | "
-            f"Gastado: {fmt(debe)} | "
-            f"Ingresado: {fmt(haber)} | "
-            f"{'Pendente: '+fmt(pend) if pend >= 0 else '⚠️ EXCESO: '+fmt(abs(pend))}"
+    if modo_filtro == "Curso escolar":
+        cur_opts = [c["nome"] for c in cursos]
+        # Preseleccionar cur_id del sidebar si viene
+        cur_def  = next((i for i,c in enumerate(cursos) if c["id"]==cur_id), 0)
+        cur_sel  = col_f2.selectbox("Curso", cur_opts, index=cur_def, key="part_filtro_cur")
+        filtro_curso_id = next((c["id"] for c in cursos if c["nome"]==cur_sel), None)
+        filtro_label    = cur_sel
+    elif modo_filtro == "Ano natural":
+        ano_sel      = col_f2.selectbox("Ano", anos,
+                            index=anos.index(ano) if ano in anos else len(anos)-1,
+                            key="part_filtro_ano")
+        filtro_ano   = ano_sel
+        filtro_label = str(ano_sel)
+
+    # ── Cargar movimientos ─────────────────────────────────────────
+    movs = get_movs_partida(p["nome"], filtro_curso_id, filtro_ano)
+
+    # ── Totales globales de la partida (sin filtro) ────────────────
+    res_global = get_partidas_resumen_global(p["nome"])
+    ing_global  = res_global["haber"]
+    gast_global = res_global["debe"]
+    saldo_act   = p["saldo_inicial"] + ing_global - gast_global
+
+    # ── Totales del filtro actual ──────────────────────────────────
+    ing_filtro  = sum(m["importe"] for m in movs if m["tipo"]=="I")
+    gast_filtro = sum(m["importe"] for m in movs if m["tipo"]=="G")
+
+    # ── Cabecera con métricas ──────────────────────────────────────
+    st.subheader(f"📋 {p['nome']}")
+    if p.get("notas"):
+        st.caption(p["notas"])
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("💰 Saldo inicial",  fmt(p["saldo_inicial"]))
+    c2.metric("📥 Total ingresos", fmt(ing_global))
+    c3.metric("📤 Total gastos",   fmt(gast_global))
+    c4.metric("🏦 Saldo actual",   fmt(saldo_act),
+              delta=fmt(saldo_act - p["saldo_inicial"]) if p["saldo_inicial"] else None)
+
+    # Barra de progreso si hay saldo inicial
+    if p["saldo_inicial"] > 0:
+        pct = min(100, gast_global / p["saldo_inicial"] * 100)
+        ico = "🔴" if pct > 90 else "🟡" if pct > 70 else "🟢"
+        st.progress(pct / 100)
+        st.caption(f"{ico} {pct:.1f}% do saldo inicial gastado")
+
+    st.divider()
+
+    # ── Totales del filtro (si hay filtro activo) ──────────────────
+    if modo_filtro != "Todos":
+        st.markdown(f"**Resultados para: {filtro_label}**")
+        cf1, cf2, cf3 = st.columns(3)
+        cf1.metric("📥 Ingresos", fmt(ing_filtro))
+        cf2.metric("📤 Gastos",   fmt(gast_filtro))
+        cf3.metric("Balance",     fmt(ing_filtro - gast_filtro))
+
+    # ── Tabla de movimientos ───────────────────────────────────────
+    col_tit, col_pdf = st.columns([4, 1])
+    col_tit.markdown(f"**📋 Movementos** {'— ' + filtro_label if modo_filtro != 'Todos' else ''} ({len(movs)})")
+
+    # Botón PDF
+    pdf_bytes = _pdf_partida(p, movs, filtro_label)
+    if pdf_bytes:
+        fname = f"Partida_{p['nome'].replace(' ','_')}_{filtro_label}.pdf"
+        col_pdf.download_button(
+            "📄 PDF", data=pdf_bytes, file_name=fname,
+            mime="application/pdf", key="btn_pdf_partida",
         )
 
-        with st.expander(header, expanded=False):
-            # Métricas
-            cc1, cc2, cc3, cc4 = st.columns(4)
-            cc1.metric("💶 Asignado",  fmt(asig))
-            cc2.metric("📤 Gastado",   fmt(debe))
-            cc3.metric("📥 Ingresado", fmt(haber))
-            cc4.metric("✅ Pendente" if pend >= 0 else "⚠️ EXCESO", fmt(abs(pend)))
-
-            if asig > 0:
-                st.progress(pct / 100)
-                st.caption(f"{pct:.1f}% executado")
-
-            # Movementos asociados a esta partida
-            movs = get_diario_partida(p["nome"], cid_f) if cid_f else []
-            if movs:
-                st.markdown("**📋 Movementos desta partida:**")
-                df = pd.DataFrame([{
-                    "Data":     fmtD(m.get("data", "")),
-                    "Ano":      m.get("ano", ""),
-                    "Área":     m.get("area", ""),
-                    "Concepto": m.get("concepto", ""),
-                    "Cliente":  m.get("cliente_nome", ""),
-                    "Período":  m.get("periodo", ""),
-                    "Debe €":   round(m["importe"], 2) if m["tipo"] == "G" else None,
-                    "Haber €":  round(m["importe"], 2) if m["tipo"] == "I" else None,
-                } for m in movs])
-                st.dataframe(df, use_container_width=True, hide_index=True)
-
-                # Mini totales
-                t_debe  = sum(m["importe"] for m in movs if m["tipo"] == "G")
-                t_haber = sum(m["importe"] for m in movs if m["tipo"] == "I")
-                st.caption(f"Total gastos: **{fmt(t_debe)}** · Total ingresos: **{fmt(t_haber)}**")
-            else:
-                st.info("Non hai movementos asociados a esta partida neste curso.")
+    if movs:
+        df = pd.DataFrame([{
+            "Data":     fmtD(m.get("data","")),
+            "Ano":      m.get("ano",""),
+            "Curso":    m.get("curso_nome",""),
+            "Área":     "📘 Func" if m.get("area")=="func" else "🍽️ Com",
+            "Concepto": m.get("concepto",""),
+            "Cliente":  m.get("cliente_nome","") or "",
+            "Período":  m.get("periodo",""),
+            "Debe €":   round(m["importe"],2) if m["tipo"]=="G" else None,
+            "Haber €":  round(m["importe"],2) if m["tipo"]=="I" else None,
+        } for m in movs])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption(
+            f"Total gastos: **{fmt(gast_filtro)}** · "
+            f"Total ingresos: **{fmt(ing_filtro)}** · "
+            f"Balance filtro: **{fmt(ing_filtro - gast_filtro)}**"
+        )
+    else:
+        st.info(f"Non hai movementos para esta partida"
+                + (f" co filtro '{filtro_label}'" if modo_filtro != "Todos" else "") + ".")
