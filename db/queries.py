@@ -50,8 +50,8 @@ def get_movs_partida(nome: str, curso_id: int | None = None,
              LEFT JOIN clientes cl ON d.cliente_id = cl.id
              WHERE d.xustifica = ?"""
     params: list = [nome]
-    if curso_id: sql += " AND d.curso_id = ?";  params.append(curso_id)
-    if ano:      sql += " AND d.ano = ?";        params.append(ano)
+    if curso_id: sql += " AND d.curso_id = ?"; params.append(curso_id)
+    if ano:      sql += " AND d.ano = ?";      params.append(ano)
     return q(sql + " ORDER BY d.data, d.num", tuple(params))
 
 def get_partidas_resumen_global(nome: str) -> dict:
@@ -83,66 +83,48 @@ def get_partida_saldos_curso(partida_id: int) -> list[dict]:
                WHERE psc.partida_id=? ORDER BY c.nome""",
              (partida_id,))
 
-# ── Cálculo de saldo arrastrado por año ───────────────────────────
-def _base_saldo(partida_id: int, partida_nome: str,
-                saldo_inicial_base: float, hasta_ano: int) -> tuple[float, int | None]:
+# ── Cálculo de saldo arrastrado ───────────────────────────────────
+def get_saldo_arrastrado(partida_id: int, partida_nome: str,
+                         saldo_inicial_base: float, hasta_ano: int) -> float:
     """
-    Devuelve (saldo_base, desde_ano).
-    Busca la consolidación más reciente anterior a hasta_ano.
-    Si no hay, usa saldo_inicial_base con desde_ano=None (desde el principio).
+    Saldo al inicio de hasta_ano.
+    Busca la consolidación más reciente anterior a hasta_ano como base,
+    luego suma los movimientos desde ahí hasta hasta_ano.
+    Ejemplo: saldo inicio 2026 = consolidado_2025 + movimientos_2025
     """
     cons = q("""SELECT ano, saldo FROM partidas_saldos
                 WHERE partida_id=? AND ano < ? AND consolidado=1
                 ORDER BY ano DESC LIMIT 1""",
              (partida_id, hasta_ano))
     if cons:
-        return cons[0]["saldo"], cons[0]["ano"]
-    return saldo_inicial_base, None
-
-
-def get_saldo_arrastrado(partida_id: int, partida_nome: str,
-                         saldo_inicial_base: float, hasta_ano: int) -> float:
-    """
-    Saldo al inicio de hasta_ano, usando consolidaciones previas como base.
-    """
-    base, desde_ano = _base_saldo(partida_id, partida_nome, saldo_inicial_base, hasta_ano)
-    if desde_ano is not None:
+        base_ano   = cons[0]["ano"]
+        base_saldo = cons[0]["saldo"]
         rows = q("""SELECT tipo, SUM(importe) as t FROM diario
                    WHERE xustifica=? AND ano >= ? AND ano < ? GROUP BY tipo""",
-                 (partida_nome, desde_ano, hasta_ano))
+                 (partida_nome, base_ano, hasta_ano))
     else:
+        base_saldo = saldo_inicial_base
         rows = q("""SELECT tipo, SUM(importe) as t FROM diario
                    WHERE xustifica=? AND ano < ? GROUP BY tipo""",
                  (partida_nome, hasta_ano))
     ing  = sum(r["t"] for r in rows if r["tipo"]=="I")
     gast = sum(r["t"] for r in rows if r["tipo"]=="G")
-    return base + ing - gast
+    return base_saldo + ing - gast
 
 
 def calcular_saldo_auto(partida_id: int, partida_nome: str,
                         saldo_inicial_base: float, hasta_ano: int) -> float:
     """
-    ★ CORRECCIÓN: igual que get_saldo_arrastrado pero sin usar consolidaciones.
-    Usa el saldo_inicial_base real + todos los movimientos anteriores al año.
-    Así si el usuario consolida 0€ y luego pulsa Auto, no suma saldo_inicial_base.
-    
-    La diferencia: este ignora consolidaciones previas y recalcula desde cero.
-    El usuario decide si consolida el resultado.
+    Calcula el saldo inicial para hasta_ano encadenando años.
+    Auto 2026 = balance real 2025 (no saldo_inicial + todo el historial).
+    Idéntico a get_saldo_arrastrado.
     """
-    # ★ Siempre desde saldo_inicial_base (0 si el usuario lo cambió)
-    # sin leer consolidaciones intermedias
-    rows = q("""SELECT tipo, SUM(importe) as t FROM diario
-               WHERE xustifica=? AND ano < ? GROUP BY tipo""",
-             (partida_nome, hasta_ano))
-    ing  = sum(r["t"] for r in rows if r["tipo"]=="I")
-    gast = sum(r["t"] for r in rows if r["tipo"]=="G")
-    return saldo_inicial_base + ing - gast
+    return get_saldo_arrastrado(partida_id, partida_nome, saldo_inicial_base, hasta_ano)
 
 
 def calcular_saldo_auto_curso(partida_nome: str, saldo_inicial_base: float,
                               curso_id: int) -> float:
     """Calcula automáticamente el saldo para un curso escolar."""
-    # Movimientos del curso
     rows = q("""SELECT tipo, SUM(importe) as t FROM diario
                WHERE xustifica=? AND curso_id=? GROUP BY tipo""",
              (partida_nome, curso_id))
