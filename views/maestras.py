@@ -3,18 +3,16 @@ import bcrypt
 import streamlit as st
 import pandas as pd
 
-from db import (get_cursos, get_codigos, get_partidas,
-                save_curso, delete_curso, save_codigo, delete_codigo,
-                save_partida, delete_partida)
+from db import (get_cursos, get_codigos,
+                save_curso, delete_curso, save_codigo, delete_codigo)
 from db.connection import q, mut
 
 
 def render() -> None:
     st.title("⚙️ Tablas Maestras")
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab4 = st.tabs([
         "📅 Cursos Escolares",
         "🏷️ Códigos Contables",
-        "📋 Partidas Finalistas",
         "👥 Usuarios",
     ])
 
@@ -70,65 +68,6 @@ def render() -> None:
             if dl and ce:
                 delete_codigo(ce["id"]); st.success("Eliminado"); st.rerun()
 
-    # ── Partidas Finalistas (modelo global) ───────────────────────
-    with tab3:
-        st.markdown(
-            '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;'
-            'padding:8px 12px;font-size:12px;color:#1e3a5f;margin-bottom:12px">'
-            'ℹ️ As partidas son <strong>globais</strong> — non están ligadas a un curso. '
-            'Os saldos iniciais por ano xestiónanse en '
-            '<strong>Partidas Finalistas → 💰 Saldos iniciais por ano</strong>.</div>',
-            unsafe_allow_html=True,
-        )
-
-        partidas = get_partidas()
-        if partidas:
-            st.dataframe(pd.DataFrame([{
-                "Partida": p["nome"],
-                "Activa":  "✅" if p["activa"] else "❌",
-                "Notas":   p["notas"],
-            } for p in partidas]), use_container_width=True, hide_index=True)
-
-        st.divider()
-
-        opts_p = ["— Nova partida —"] + [p["nome"] for p in partidas]
-        sel_p  = st.selectbox("Editar ou crear partida", opts_p, key="part_glob_sel")
-        pe     = None if sel_p.startswith("—") else next(
-            (p for p in partidas if p["nome"] == sel_p), None)
-
-        with st.form("part_glob_form"):
-            if pe:
-                st.caption(f"Editando: **{pe['nome']}**")
-            else:
-                st.caption("Nova partida global")
-
-            c1, c2 = st.columns(2)
-            nome_val  = c1.text_input("Nome da partida *",
-                value=pe["nome"] if pe else "", placeholder="Ex: PLAMBE")
-            notas_val = c2.text_input("Notas", value=pe["notas"] if pe else "")
-            activa_val = st.checkbox("Partida activa (visible no formulario)",
-                                     value=bool(pe["activa"]) if pe else True)
-
-            cs_b, cd_b = st.columns([3, 1])
-            sv = cs_b.form_submit_button("💾 Gardar", type="primary", use_container_width=True)
-            dl = cd_b.form_submit_button("🗑️ Eliminar", use_container_width=True) if pe else False
-
-            if sv:
-                if not nome_val.strip():
-                    st.error("Nome obrigatorio")
-                else:
-                    d = {"nome": nome_val.strip().upper(),
-                         "notas": notas_val,
-                         "activa": activa_val}
-                    if pe: d["id"] = pe["id"]
-                    save_partida(d)
-                    st.success(f"✅ '{nome_val}' gardada!"); st.rerun()
-            if dl and pe:
-                n = q("SELECT COUNT(*) as n FROM diario WHERE xustifica=?", (pe["nome"],))
-                if n and n[0]["n"] > 0:
-                    st.warning(f"⚠️ Esta partida ten {n[0]['n']} movementos asignados.")
-                delete_partida(pe["id"])
-                st.success("🗑️ Eliminada"); st.rerun()
 
     # ── Usuarios ──────────────────────────────────────────────────
     with tab4:
