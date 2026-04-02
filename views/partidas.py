@@ -2,18 +2,21 @@ import streamlit as st
 import pandas as pd
 
 from db import (get_cursos, get_anos, get_partidas, get_movs_partida,
-                get_partidas_resumen_global, get_partida_saldo, get_partida_saldos,
-                get_saldo_arrastrado, calcular_saldo_auto,
-                save_partida_saldo, delete_partida_saldo)
+                get_partidas_resumen_global,
+                get_partida_saldo, get_partida_saldos,
+                get_partida_saldo_curso, get_partida_saldos_curso,
+                get_saldo_arrastrado, calcular_saldo_auto, calcular_saldo_auto_curso,
+                save_partida_saldo, delete_partida_saldo,
+                save_partida_saldo_curso, delete_partida_saldo_curso)
 from utils import fmt, fmtD
 from utils.pdf import gen_pdf
 
 
 def _pdf_partida(p, movs, filtro_label, saldo_anterior):
-    total_ing  = sum(m["importe"] for m in movs if m["tipo"]=="I")
-    total_gast = sum(m["importe"] for m in movs if m["tipo"]=="G")
+    total_ing   = sum(m["importe"] for m in movs if m["tipo"]=="I")
+    total_gast  = sum(m["importe"] for m in movs if m["tipo"]=="G")
     saldo_final = saldo_anterior + total_ing - total_gast
-    subtitulo = (
+    subtitulo   = (
         f"Saldo anterior: {fmt(saldo_anterior)} € | "
         f"Ingresos: {fmt(total_ing)} € | Gastos: {fmt(total_gast)} € | "
         f"Saldo actual: {fmt(saldo_final)} €"
@@ -26,73 +29,101 @@ def _pdf_partida(p, movs, filtro_label, saldo_anterior):
               m.get("periodo",""),
               round(m["importe"],2) if m["tipo"]=="G" else None,
               round(m["importe"],2) if m["tipo"]=="I" else None] for m in movs]
-    totales = ["","","","","TOTAL","","",fmt(total_gast),fmt(total_ing)]
+    totales = ["","","","","TOTAL","","", fmt(total_gast), fmt(total_ing)]
     pdf_bytes, _ = gen_pdf(title=f"📋 Partida: {p['nome']}", subtitulo=subtitulo,
                             columnas=cols, filas=filas, totales=totales)
     return pdf_bytes
 
 
-def _render_gestion_saldos(p, anos):
-    """
-    Panel de gestión de saldos iniciales por año.
-    Para cada año: saldo consolidado (manual o auto) + botón consolidar.
-    """
-    st.subheader("💰 Saldos iniciais por ano natural")
+def _render_gestion_saldos(p, anos, cursos):
+    st.subheader("💰 Saldos iniciais")
     st.markdown(
         '<div style="background:#fef9c3;border:1px solid #fde047;border-radius:6px;'
         'padding:8px 12px;font-size:12px;color:#713f12;margin-bottom:12px">'
-        '⚠️ O saldo inicial de cada ano é o punto de partida para os cálculos. '
-        'Podes introducilo manualmente ou calculalo de forma automática a partir '
-        'dos movementos anteriores.</div>',
+        '⚠️ O saldo inicial é o punto de partida dos cálculos. '
+        'Consolídao manualmente ou usa o botón <strong>🔢 Auto</strong> '
+        'para calculalo desde os movementos anteriores.</div>',
         unsafe_allow_html=True,
     )
 
-    saldos_consolidados = {s["ano"]: s for s in get_partida_saldos(p["id"])}
+    sub1, sub2 = st.tabs(["📅 Por ano natural", "🎓 Por curso escolar"])
 
-    for ano in sorted(anos):
-        consolidado = saldos_consolidados.get(ano)
-        saldo_auto  = calcular_saldo_auto(p["id"], p["nome"], p["saldo_inicial"], ano)
+    # ── Saldos por AÑO ────────────────────────────────────────────
+    with sub1:
+        saldos_ano = {s["ano"]: s for s in get_partida_saldos(p["id"])}
+        for ano in sorted(anos):
+            cons       = saldos_ano.get(ano)
+            # ★ Auto siempre desde saldo_inicial real (p["saldo_inicial"]) sin consolidaciones
+            saldo_auto = calcular_saldo_auto(p["id"], p["nome"], p["saldo_inicial"], ano)
 
-        with st.expander(
-            f"Ano **{ano}** — "
-            + (f"✅ Consolidado: **{fmt(consolidado['saldo'])} €**"
-               if consolidado and consolidado["consolidado"]
-               else f"⚪ Non consolidado (auto: {fmt(saldo_auto)} €)"),
-            expanded=False,
-        ):
-            col_val, col_btn = st.columns([3, 2])
+            with st.expander(
+                f"Ano **{ano}** — " + (
+                    f"✅ Consolidado: **{fmt(cons['saldo'])} €**"
+                    if cons and cons["consolidado"]
+                    else f"⚪ Non consolidado (auto: {fmt(saldo_auto)} €)"
+                ), expanded=False,
+            ):
+                col_val, col_btn = st.columns([3, 2])
+                saldo_actual = cons["saldo"] if cons else saldo_auto
+                novo = col_val.number_input(
+                    f"Saldo inicial {ano} €", value=float(saldo_actual), step=0.01,
+                    key=f"ps_a_{p['id']}_{ano}",
+                    help=f"Cálculo automático puro: {fmt(saldo_auto)} €",
+                )
+                with col_btn:
+                    st.markdown("<div style='margin-top:22px'></div>", unsafe_allow_html=True)
+                    c1, c2 = st.columns(2)
+                    if c1.button("🔢 Auto", key=f"auto_a_{p['id']}_{ano}",
+                                  help="Calcular desde movementos anteriores"):
+                        save_partida_saldo(p["id"], ano, saldo_auto, 1)
+                        st.success(f"✅ {fmt(saldo_auto)} € consolidado")
+                        st.rerun()
+                    if c2.button("💾 Consolidar", key=f"cons_a_{p['id']}_{ano}",
+                                  type="primary"):
+                        save_partida_saldo(p["id"], ano, novo, 1)
+                        st.success(f"✅ {fmt(novo)} € consolidado")
+                        st.rerun()
 
-            saldo_actual = consolidado["saldo"] if consolidado else saldo_auto
-            novo_saldo   = col_val.number_input(
-                f"Saldo inicial {ano} €",
-                value=float(saldo_actual),
-                step=0.01,
-                key=f"ps_{p['id']}_{ano}",
-                help=f"Cálculo automático: {fmt(saldo_auto)} €",
-            )
+                if cons and cons["consolidado"]:
+                    diff = abs(cons["saldo"] - saldo_auto)
+                    st.caption(f"Consolidado: **{fmt(cons['saldo'])} €** · "
+                               f"Auto puro: **{fmt(saldo_auto)} €**")
+                    if diff > 0.01:
+                        st.warning(f"⚠️ Diferenza: {fmt(diff)} €")
 
-            with col_btn:
-                st.markdown("<div style='margin-top:22px'></div>", unsafe_allow_html=True)
-                c1, c2 = st.columns(2)
-                if c1.button("🔢 Auto", key=f"auto_{p['id']}_{ano}",
-                              help="Calcular automáticamente desde movementos anteriores"):
-                    save_partida_saldo(p["id"], ano, saldo_auto, 1)
-                    st.success(f"✅ {fmt(saldo_auto)} € consolidado (auto)")
-                    st.rerun()
-                if c2.button("💾 Consolidar", key=f"cons_{p['id']}_{ano}", type="primary"):
-                    save_partida_saldo(p["id"], ano, novo_saldo, 1)
-                    st.success(f"✅ {fmt(novo_saldo)} € consolidado")
-                    st.rerun()
+    # ── Saldos por CURSO ──────────────────────────────────────────
+    with sub2:
+        saldos_curso = {s["curso_id"]: s for s in get_partida_saldos_curso(p["id"])}
+        for cur in cursos:
+            cons       = saldos_curso.get(cur["id"])
+            saldo_auto = calcular_saldo_auto_curso(p["nome"], p["saldo_inicial"], cur["id"])
 
-            if consolidado and consolidado["consolidado"]:
-                st.caption(f"Último consolidado: **{fmt(consolidado['saldo'])} €** · "
-                           f"Cálculo auto: **{fmt(saldo_auto)} €**")
-                if abs(consolidado["saldo"] - saldo_auto) > 0.01:
-                    st.warning(
-                        f"⚠️ Diferenza entre consolidado ({fmt(consolidado['saldo'])} €) "
-                        f"e cálculo automático ({fmt(saldo_auto)} €): "
-                        f"{fmt(abs(consolidado['saldo']-saldo_auto))} €"
-                    )
+            with st.expander(
+                f"Curso **{cur['nome']}** — " + (
+                    f"✅ Consolidado: **{fmt(cons['saldo'])} €**"
+                    if cons and cons["consolidado"]
+                    else f"⚪ Non consolidado (auto: {fmt(saldo_auto)} €)"
+                ), expanded=False,
+            ):
+                col_val, col_btn = st.columns([3, 2])
+                saldo_actual = cons["saldo"] if cons else saldo_auto
+                novo = col_val.number_input(
+                    f"Saldo inicial {cur['nome']} €", value=float(saldo_actual), step=0.01,
+                    key=f"ps_c_{p['id']}_{cur['id']}",
+                    help=f"Cálculo automático: {fmt(saldo_auto)} €",
+                )
+                with col_btn:
+                    st.markdown("<div style='margin-top:22px'></div>", unsafe_allow_html=True)
+                    c1, c2 = st.columns(2)
+                    if c1.button("🔢 Auto", key=f"auto_c_{p['id']}_{cur['id']}"):
+                        save_partida_saldo_curso(p["id"], cur["id"], saldo_auto, 1)
+                        st.success(f"✅ {fmt(saldo_auto)} € consolidado")
+                        st.rerun()
+                    if c2.button("💾 Consolidar", key=f"cons_c_{p['id']}_{cur['id']}",
+                                  type="primary"):
+                        save_partida_saldo_curso(p["id"], cur["id"], novo, 1)
+                        st.success(f"✅ {fmt(novo)} € consolidado")
+                        st.rerun()
 
 
 def render(ano: int, cur_id: int | None) -> None:
@@ -106,23 +137,20 @@ def render(ano: int, cur_id: int | None) -> None:
     cursos = get_cursos()
     anos   = get_anos()
 
-    # ── Selector de partida ────────────────────────────────────────
     p_names = [p["nome"] for p in partidas]
     p_sel   = st.selectbox("📋 Selecciona a partida", p_names, key="part_sel")
     p       = next((x for x in partidas if x["nome"]==p_sel), None)
     if not p:
         return
 
-    # ── Tabs: Vista / Saldos ───────────────────────────────────────
-    tab_vista, tab_saldos = st.tabs(["📊 Vista e movementos", "💰 Saldos iniciais por ano"])
+    tab_vista, tab_saldos = st.tabs(["📊 Vista e movementos", "💰 Saldos iniciais"])
 
     with tab_saldos:
-        _render_gestion_saldos(p, anos)
+        _render_gestion_saldos(p, anos, cursos)
 
     with tab_vista:
         st.divider()
 
-        # ── Filtros ────────────────────────────────────────────────
         col_f1, col_f2 = st.columns(2)
         modo_filtro = col_f1.radio(
             "Filtrar por",
@@ -147,42 +175,46 @@ def render(ano: int, cur_id: int | None) -> None:
             filtro_ano   = ano_sel
             filtro_label = str(ano_sel)
 
-        # ── Cargar movimientos ─────────────────────────────────────
         movs = get_movs_partida(p["nome"], filtro_curso_id, filtro_ano)
 
         # ── Calcular saldo según modo ──────────────────────────────
         if modo_filtro == "Ano natural" and filtro_ano is not None:
-            # ★ Usa saldo consolidado si existe, si no calcula automático
-            consolidado = get_partida_saldo(p["id"], filtro_ano)
-            if consolidado and consolidado["consolidado"]:
-                saldo_anterior    = consolidado["saldo"]
-                label_saldo_ant   = f"Saldo consolidado {filtro_ano}"
-                es_consolidado    = True
+            cons = get_partida_saldo(p["id"], filtro_ano)
+            if cons and cons["consolidado"]:
+                saldo_anterior  = cons["saldo"]
+                label_ant       = f"Saldo consolidado {filtro_ano}"
+                es_consolidado  = True
             else:
-                saldo_anterior    = get_saldo_arrastrado(
+                saldo_anterior  = get_saldo_arrastrado(
                     p["id"], p["nome"], p["saldo_inicial"], filtro_ano)
-                label_saldo_ant   = f"Saldo anterior ({filtro_ano-1} e antes)"
-                es_consolidado    = False
-
+                label_ant       = f"Saldo anterior ({filtro_ano-1} e antes)"
+                es_consolidado  = False
             ing_periodo  = sum(m["importe"] for m in movs if m["tipo"]=="I")
             gast_periodo = sum(m["importe"] for m in movs if m["tipo"]=="G")
             saldo_final  = saldo_anterior + ing_periodo - gast_periodo
 
-        elif modo_filtro == "Curso escolar":
-            saldo_anterior  = p["saldo_inicial"]
-            label_saldo_ant = "Saldo inicial"
-            es_consolidado  = False
-            ing_periodo     = sum(m["importe"] for m in movs if m["tipo"]=="I")
-            gast_periodo    = sum(m["importe"] for m in movs if m["tipo"]=="G")
-            saldo_final     = saldo_anterior + ing_periodo - gast_periodo
+        elif modo_filtro == "Curso escolar" and filtro_curso_id is not None:
+            cons = get_partida_saldo_curso(p["id"], filtro_curso_id)
+            if cons and cons["consolidado"]:
+                saldo_anterior  = cons["saldo"]
+                label_ant       = f"Saldo consolidado {filtro_label}"
+                es_consolidado  = True
+            else:
+                saldo_anterior  = p["saldo_inicial"]
+                label_ant       = "Saldo inicial"
+                es_consolidado  = False
+            ing_periodo  = sum(m["importe"] for m in movs if m["tipo"]=="I")
+            gast_periodo = sum(m["importe"] for m in movs if m["tipo"]=="G")
+            saldo_final  = saldo_anterior + ing_periodo - gast_periodo
+
         else:
-            res_global      = get_partidas_resumen_global(p["nome"])
-            saldo_anterior  = p["saldo_inicial"]
-            label_saldo_ant = "Saldo inicial"
-            es_consolidado  = False
-            ing_periodo     = res_global["haber"]
-            gast_periodo    = res_global["debe"]
-            saldo_final     = saldo_anterior + ing_periodo - gast_periodo
+            res_global     = get_partidas_resumen_global(p["nome"])
+            saldo_anterior = p["saldo_inicial"]
+            label_ant      = "Saldo inicial"
+            es_consolidado = False
+            ing_periodo    = res_global["haber"]
+            gast_periodo   = res_global["debe"]
+            saldo_final    = saldo_anterior + ing_periodo - gast_periodo
 
         # ── Métricas ───────────────────────────────────────────────
         st.subheader(f"📋 {p['nome']}")
@@ -190,9 +222,8 @@ def render(ano: int, cur_id: int | None) -> None:
             st.caption(p["notas"])
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric(label_saldo_ant, fmt(saldo_anterior),
-                  help="✅ Consolidado manualmente" if es_consolidado else
-                       "⚪ Calculado automáticamente")
+        c1.metric(label_ant, fmt(saldo_anterior),
+                  help="✅ Consolidado" if es_consolidado else "⚪ Calculado auto")
         c2.metric("📥 Ingresos",    fmt(ing_periodo))
         c3.metric("📤 Gastos",      fmt(gast_periodo))
         c4.metric("🏦 Saldo actual", fmt(saldo_final),
@@ -205,18 +236,17 @@ def render(ano: int, cur_id: int | None) -> None:
             st.progress(pct / 100)
             st.caption(f"{ico} {pct:.1f}% dos recursos gastados")
 
-        if modo_filtro == "Ano natural" and not es_consolidado:
+        if not es_consolidado and modo_filtro != "Todos":
             st.markdown(
-                f"<div style='background:#f0fdf4;border:1px solid #86efac;"
-                f"border-radius:6px;padding:6px 10px;font-size:11px;color:#166534;"
-                f"margin-bottom:8px;'>ℹ️ Saldo calculado automaticamente. "
-                f"Ve á pestaña <strong>💰 Saldos iniciais</strong> para consolidalo.</div>",
+                "<div style='background:#f0fdf4;border:1px solid #86efac;"
+                "border-radius:6px;padding:6px 10px;font-size:11px;color:#166534;"
+                "margin-bottom:8px;'>ℹ️ Saldo calculado automaticamente. "
+                "Ve á pestaña <strong>💰 Saldos iniciais</strong> para consolidalo.</div>",
                 unsafe_allow_html=True,
             )
 
         st.divider()
 
-        # ── Tabla movimientos ──────────────────────────────────────
         col_tit, col_pdf = st.columns([4, 1])
         col_tit.markdown(
             f"**📋 Movementos** "
@@ -246,8 +276,8 @@ def render(ano: int, cur_id: int | None) -> None:
             st.caption(
                 f"Ingresos: **{fmt(ing_periodo)}** · "
                 f"Gastos: **{fmt(gast_periodo)}** · "
-                f"Balance período: **{fmt(ing_periodo-gast_periodo)}**"
+                f"Balance: **{fmt(ing_periodo-gast_periodo)}**"
             )
         else:
-            st.info(f"Non hai movementos para esta partida"
+            st.info(f"Non hai movementos"
                     + (f" co filtro '{filtro_label}'" if modo_filtro!="Todos" else "") + ".")

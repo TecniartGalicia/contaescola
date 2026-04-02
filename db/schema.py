@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS partidas_saldos (
     consolidado  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (partida_id, ano)
 );
+CREATE TABLE IF NOT EXISTS partidas_saldos_curso (
+    partida_id   INTEGER NOT NULL REFERENCES partidas(id) ON DELETE CASCADE,
+    curso_id     INTEGER NOT NULL REFERENCES cursos(id) ON DELETE CASCADE,
+    saldo        REAL    NOT NULL DEFAULT 0,
+    consolidado  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (partida_id, curso_id)
+);
 CREATE TABLE IF NOT EXISTS saldos (
     ano  INTEGER NOT NULL,
     area TEXT    NOT NULL CHECK(area IN ('func','com')),
@@ -178,16 +185,18 @@ def _migrate_partidas_to_global(con):
     if n > 0:
         return
     rows = con.execute("""
-        SELECT pc.nome, pc.importe_asignado, pc.notas, c.nome as curso_nome
-        FROM partidas_config pc JOIN cursos c ON pc.curso_id = c.id
+        SELECT pc.nome, pc.importe_asignado, pc.notas
+        FROM partidas_config pc
+        JOIN cursos c ON pc.curso_id = c.id
         ORDER BY c.nome DESC, pc.nome
     """).fetchall()
     vistas = set()
     for r in rows:
         if r[0] in vistas: continue
         vistas.add(r[0])
-        con.execute("INSERT OR IGNORE INTO partidas (nome,saldo_inicial,notas) VALUES (?,?,?)",
-                    (r[0], r[1] or 0.0, r[2] or ""))
+        con.execute(
+            "INSERT OR IGNORE INTO partidas (nome,saldo_inicial,notas) VALUES (?,?,?)",
+            (r[0], r[1] or 0.0, r[2] or ""))
 
 
 def _seed_data(con):
@@ -200,11 +209,13 @@ def _seed_data(con):
     for nome in DATOS_INICIALES["cursos"]:
         con.execute("INSERT OR IGNORE INTO cursos (nome) VALUES (?)", (nome,))
     for codigo, desc, orden in DATOS_INICIALES["codigos"]:
-        con.execute("INSERT OR IGNORE INTO codigos (codigo,descripcion,orden) VALUES (?,?,?)",
-                    (codigo, desc, orden))
+        con.execute(
+            "INSERT OR IGNORE INTO codigos (codigo,descripcion,orden) VALUES (?,?,?)",
+            (codigo, desc, orden))
     n = con.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
     if n == 0:
         import bcrypt
         ph = bcrypt.hashpw(b"mateo", bcrypt.gensalt(12)).decode()
-        con.execute("INSERT OR IGNORE INTO usuarios (username,nome,password,activo) VALUES (?,?,?,1)",
-                    ("raquel","Raquel",ph))
+        con.execute(
+            "INSERT OR IGNORE INTO usuarios (username,nome,password,activo) VALUES (?,?,?,1)",
+            ("raquel", "Raquel", ph))

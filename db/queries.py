@@ -1,6 +1,5 @@
 """
 db/queries.py
-Todas las consultas SELECT de la aplicación.
 """
 from .connection import q, q1
 from .schema import PERIODOS
@@ -34,7 +33,7 @@ def get_alumnos() -> list[dict]:
     return q("""SELECT a.*, c.nome as curso_nome FROM alumnos_neae a
                LEFT JOIN cursos c ON a.curso_id = c.id ORDER BY a.nome""")
 
-# ── Partidas globales ────────────────────────────────────────────
+# ── Partidas globales ─────────────────────────────────────────────
 def get_partidas(solo_activas: bool = False) -> list[dict]:
     sql = "SELECT * FROM partidas"
     if solo_activas: sql += " WHERE activa=1"
@@ -51,10 +50,8 @@ def get_movs_partida(nome: str, curso_id: int | None = None,
              LEFT JOIN clientes cl ON d.cliente_id = cl.id
              WHERE d.xustifica = ?"""
     params: list = [nome]
-    if curso_id:
-        sql += " AND d.curso_id = ?"; params.append(curso_id)
-    if ano:
-        sql += " AND d.ano = ?"; params.append(ano)
+    if curso_id: sql += " AND d.curso_id = ?";  params.append(curso_id)
+    if ano:      sql += " AND d.ano = ?";        params.append(ano)
     return q(sql + " ORDER BY d.data, d.num", tuple(params))
 
 def get_partidas_resumen_global(nome: str) -> dict:
@@ -62,11 +59,10 @@ def get_partidas_resumen_global(nome: str) -> dict:
              (nome,))
     res = {"debe": 0.0, "haber": 0.0}
     for r in rows:
-        if r["tipo"] == "G": res["debe"]  += r["t"]
-        else:                res["haber"] += r["t"]
+        res["debe" if r["tipo"]=="G" else "haber"] += r["t"]
     return res
 
-# ── Saldos por año de partida ────────────────────────────────────
+# ── Saldos por año ────────────────────────────────────────────────
 def get_partida_saldo(partida_id: int, ano: int) -> dict | None:
     return q1("SELECT * FROM partidas_saldos WHERE partida_id=? AND ano=?",
               (partida_id, ano))
@@ -75,56 +71,91 @@ def get_partida_saldos(partida_id: int) -> list[dict]:
     return q("SELECT * FROM partidas_saldos WHERE partida_id=? ORDER BY ano",
              (partida_id,))
 
+# ── Saldos por curso ──────────────────────────────────────────────
+def get_partida_saldo_curso(partida_id: int, curso_id: int) -> dict | None:
+    return q1("SELECT * FROM partidas_saldos_curso WHERE partida_id=? AND curso_id=?",
+              (partida_id, curso_id))
+
+def get_partida_saldos_curso(partida_id: int) -> list[dict]:
+    return q("""SELECT psc.*, c.nome as curso_nome
+               FROM partidas_saldos_curso psc
+               JOIN cursos c ON psc.curso_id = c.id
+               WHERE psc.partida_id=? ORDER BY c.nome""",
+             (partida_id,))
+
+# ── Cálculo de saldo arrastrado por año ───────────────────────────
+def _base_saldo(partida_id: int, partida_nome: str,
+                saldo_inicial_base: float, hasta_ano: int) -> tuple[float, int | None]:
+    """
+    Devuelve (saldo_base, desde_ano).
+    Busca la consolidación más reciente anterior a hasta_ano.
+    Si no hay, usa saldo_inicial_base con desde_ano=None (desde el principio).
+    """
+    cons = q("""SELECT ano, saldo FROM partidas_saldos
+                WHERE partida_id=? AND ano < ? AND consolidado=1
+                ORDER BY ano DESC LIMIT 1""",
+             (partida_id, hasta_ano))
+    if cons:
+        return cons[0]["saldo"], cons[0]["ano"]
+    return saldo_inicial_base, None
+
+
 def get_saldo_arrastrado(partida_id: int, partida_nome: str,
                          saldo_inicial_base: float, hasta_ano: int) -> float:
     """
-    Saldo al inicio de 'hasta_ano'.
-    Usa el consolidado más reciente anterior a hasta_ano como base,
-    y suma los movimientos desde ese punto hasta hasta_ano.
+    Saldo al inicio de hasta_ano, usando consolidaciones previas como base.
     """
-    consolidados = q(
-        """SELECT ano, saldo FROM partidas_saldos
-           WHERE partida_id=? AND ano < ? AND consolidado=1
-           ORDER BY ano DESC LIMIT 1""",
-        (partida_id, hasta_ano)
-    )
-    if consolidados:
-        base_ano   = consolidados[0]["ano"]
-        base_saldo = consolidados[0]["saldo"]
-        rows = q(
-            """SELECT tipo, SUM(importe) as t FROM diario
-               WHERE xustifica=? AND ano >= ? AND ano < ? GROUP BY tipo""",
-            (partida_nome, base_ano, hasta_ano)
-        )
+    base, desde_ano = _base_saldo(partida_id, partida_nome, saldo_inicial_base, hasta_ano)
+    if desde_ano is not None:
+        rows = q("""SELECT tipo, SUM(importe) as t FROM diario
+                   WHERE xustifica=? AND ano >= ? AND ano < ? GROUP BY tipo""",
+                 (partida_nome, desde_ano, hasta_ano))
     else:
-        base_saldo = saldo_inicial_base
-        rows = q(
-            """SELECT tipo, SUM(importe) as t FROM diario
-               WHERE xustifica=? AND ano < ? GROUP BY tipo""",
-            (partida_nome, hasta_ano)
-        )
-    ing  = sum(r["t"] for r in rows if r["tipo"] == "I")
-    gast = sum(r["t"] for r in rows if r["tipo"] == "G")
-    return base_saldo + ing - gast
+        rows = q("""SELECT tipo, SUM(importe) as t FROM diario
+                   WHERE xustifica=? AND ano < ? GROUP BY tipo""",
+                 (partida_nome, hasta_ano))
+    ing  = sum(r["t"] for r in rows if r["tipo"]=="I")
+    gast = sum(r["t"] for r in rows if r["tipo"]=="G")
+    return base + ing - gast
+
 
 def calcular_saldo_auto(partida_id: int, partida_nome: str,
                         saldo_inicial_base: float, hasta_ano: int) -> float:
-    """Calcula automáticamente el saldo inicial para un año (sin usar consolidados)."""
-    rows = q(
-        """SELECT tipo, SUM(importe) as t FROM diario
-           WHERE xustifica=? AND ano < ? GROUP BY tipo""",
-        (partida_nome, hasta_ano)
-    )
-    ing  = sum(r["t"] for r in rows if r["tipo"] == "I")
-    gast = sum(r["t"] for r in rows if r["tipo"] == "G")
+    """
+    ★ CORRECCIÓN: igual que get_saldo_arrastrado pero sin usar consolidaciones.
+    Usa el saldo_inicial_base real + todos los movimientos anteriores al año.
+    Así si el usuario consolida 0€ y luego pulsa Auto, no suma saldo_inicial_base.
+    
+    La diferencia: este ignora consolidaciones previas y recalcula desde cero.
+    El usuario decide si consolida el resultado.
+    """
+    # ★ Siempre desde saldo_inicial_base (0 si el usuario lo cambió)
+    # sin leer consolidaciones intermedias
+    rows = q("""SELECT tipo, SUM(importe) as t FROM diario
+               WHERE xustifica=? AND ano < ? GROUP BY tipo""",
+             (partida_nome, hasta_ano))
+    ing  = sum(r["t"] for r in rows if r["tipo"]=="I")
+    gast = sum(r["t"] for r in rows if r["tipo"]=="G")
     return saldo_inicial_base + ing - gast
 
-# ── Partidas config legacy ────────────────────────────────────────
+
+def calcular_saldo_auto_curso(partida_nome: str, saldo_inicial_base: float,
+                              curso_id: int) -> float:
+    """Calcula automáticamente el saldo para un curso escolar."""
+    # Movimientos del curso
+    rows = q("""SELECT tipo, SUM(importe) as t FROM diario
+               WHERE xustifica=? AND curso_id=? GROUP BY tipo""",
+             (partida_nome, curso_id))
+    ing  = sum(r["t"] for r in rows if r["tipo"]=="I")
+    gast = sum(r["t"] for r in rows if r["tipo"]=="G")
+    return saldo_inicial_base + ing - gast
+
+# ── Partidas config legacy ─────────────────────────────────────────
 def get_partidas_config(curso_id: int | None = None) -> list[dict]:
     if curso_id:
         return q("""SELECT pc.*, c.nome as curso_nome FROM partidas_config pc
                    LEFT JOIN cursos c ON pc.curso_id = c.id
-                   WHERE pc.curso_id = ? ORDER BY pc.nome""", (curso_id,))
+                   WHERE pc.curso_id=? ORDER BY pc.nome""", (curso_id,))
     return q("""SELECT pc.*, c.nome as curso_nome FROM partidas_config pc
                LEFT JOIN cursos c ON pc.curso_id = c.id ORDER BY c.nome, pc.nome""")
 
@@ -140,14 +171,13 @@ def get_diario(area: str, ano: int, curso_id: int | None = None) -> list[dict]:
              LEFT JOIN clientes cl ON d.cliente_id = cl.id
              WHERE d.area=? AND d.ano=?"""
     params: list = [area, ano]
-    if curso_id:
-        sql += " AND d.curso_id=?"; params.append(curso_id)
+    if curso_id: sql += " AND d.curso_id=?"; params.append(curso_id)
     return q(sql + " ORDER BY d.num", tuple(params))
 
 def get_diario_cliente(cliente_id: int) -> list[dict]:
     return q("""SELECT d.*, c.nome as curso_nome FROM diario d
                LEFT JOIN cursos c ON d.curso_id = c.id
-               WHERE d.cliente_id = ? ORDER BY d.ano DESC, d.data DESC""",
+               WHERE d.cliente_id=? ORDER BY d.ano DESC, d.data DESC""",
              (cliente_id,))
 
 def get_diario_partida(xustifica: str, curso_id: int) -> list[dict]:
@@ -155,20 +185,20 @@ def get_diario_partida(xustifica: str, curso_id: int) -> list[dict]:
                FROM diario d
                LEFT JOIN cursos   c  ON d.curso_id  = c.id
                LEFT JOIN clientes cl ON d.cliente_id = cl.id
-               WHERE d.xustifica = ? AND d.partida_curso_id = ?
+               WHERE d.xustifica=? AND d.partida_curso_id=?
                ORDER BY d.data, d.num""", (xustifica, curso_id))
 
 def get_partidas_resumen(ano: int, curso_id: int | None = None) -> dict:
     if curso_id:
         rows = q("""SELECT xustifica, tipo, SUM(importe) as t FROM diario
-                   WHERE partida_curso_id = ? AND xustifica != ''
+                   WHERE partida_curso_id=? AND xustifica!=''
                    GROUP BY xustifica, tipo""", (curso_id,))
     else:
         rows = q("""SELECT xustifica, tipo, SUM(importe) as t FROM diario
                    WHERE ano=? AND xustifica!='' GROUP BY xustifica, tipo""", (ano,))
     res: dict = {}
     for r in rows:
-        res.setdefault(r["xustifica"], {"debe": 0.0, "haber": 0.0})
+        res.setdefault(r["xustifica"], {"debe":0.0,"haber":0.0})
         res[r["xustifica"]]["haber" if r["tipo"]=="I" else "debe"] += r["t"]
     return res
 
@@ -180,12 +210,12 @@ def get_becas_resumen(ano: int, curso_id: int | None = None) -> dict:
             continue
         if curso_id:
             sql    = """SELECT d.*, c.nome as curso_nome FROM diario d
-                        LEFT JOIN cursos c ON d.curso_id = c.id
+                        LEFT JOIN cursos c ON d.curso_id=c.id
                         WHERE d.curso_id=? AND d.alumno_neae=?"""
             params: list = [curso_id, al["nome"]]
         else:
             sql    = """SELECT d.*, c.nome as curso_nome FROM diario d
-                        LEFT JOIN cursos c ON d.curso_id = c.id
+                        LEFT JOIN cursos c ON d.curso_id=c.id
                         WHERE d.ano=? AND d.alumno_neae=?"""
             params = [ano, al["nome"]]
         movs = q(sql + " ORDER BY d.data", tuple(params))
@@ -216,14 +246,13 @@ def get_informes(params: dict) -> list[dict]:
     return q(sql + " ORDER BY d.ano, d.data, d.num", tuple(p))
 
 def get_347(ano: int, umbral: float) -> list[dict]:
-    provs = q(
-        """SELECT cl.id, cl.nome, cl.nif, cl.email, cl.telefono, cl.direccion,
-                  SUM(CASE WHEN d.tipo='G' THEN d.importe ELSE 0 END) AS total_pagado,
-                  SUM(CASE WHEN d.tipo='I' THEN d.importe ELSE 0 END) AS total_cobrado,
-                  COUNT(*) AS num_ops
-           FROM diario d JOIN clientes cl ON d.cliente_id = cl.id
-           WHERE d.ano=? GROUP BY cl.id HAVING total_pagado >= ?
-           ORDER BY total_pagado DESC""", (ano, umbral))
+    provs = q("""SELECT cl.id, cl.nome, cl.nif, cl.email, cl.telefono, cl.direccion,
+                        SUM(CASE WHEN d.tipo='G' THEN d.importe ELSE 0 END) AS total_pagado,
+                        SUM(CASE WHEN d.tipo='I' THEN d.importe ELSE 0 END) AS total_cobrado,
+                        COUNT(*) AS num_ops
+                 FROM diario d JOIN clientes cl ON d.cliente_id=cl.id
+                 WHERE d.ano=? GROUP BY cl.id HAVING total_pagado>=?
+                 ORDER BY total_pagado DESC""", (ano, umbral))
     for pr in provs:
         trim: dict = {}
         for per in PERIODOS:
