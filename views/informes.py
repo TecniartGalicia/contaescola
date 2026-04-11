@@ -228,40 +228,55 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
         ]))
         elems.append(res_t); return elems
 
-    def _make_on_page(lbl_izq, lbl_dcha):
-        def _on_page(canvas, doc):
-            canvas.saveState()
-            canvas.setFillColor(BLUE)
-            canvas.rect(ML, PAGE_H-MT, PAGE_W-ML-MR, MT, fill=1, stroke=0)
-            if cfg.get("logo_base64"):
-                try:
-                    import base64 as _b64
-                    img = ImageReader(io.BytesIO(_b64.b64decode(cfg["logo_base64"])))
-                    canvas.drawImage(img, ML+0.1*cm, PAGE_H-MT+0.1*cm,
-                                     width=1.0*cm, height=1.2*cm,
-                                     preserveAspectRatio=True, mask="auto")
-                except Exception:
-                    pass
-            cx_l = ML+A5_W/2; cx_r = ML+A5_W+A5_GAP+A5_W/2
-            canvas.setFillColor(colors.white); canvas.setFont("Helvetica-Bold", 8)
-            canvas.drawCentredString(cx_l, PAGE_H-MT+0.68*cm, lbl_izq)
-            canvas.drawCentredString(cx_r, PAGE_H-MT+0.68*cm, lbl_dcha)
-            canvas.setFont("Helvetica", 6); canvas.setFillColor(colors.HexColor("#dbeafe"))
-            centro = cfg.get("centro_nome","")
-            canvas.drawCentredString(cx_l,  PAGE_H-MT+0.22*cm, centro)
-            canvas.drawCentredString(cx_r,  PAGE_H-MT+0.22*cm, centro)
-            canvas.drawRightString(PAGE_W-MR-0.1*cm, PAGE_H-MT+0.22*cm, fecha_gen)
-            canvas.setStrokeColor(GRAY); canvas.setLineWidth(0.8)
-            canvas.line(ML+A5_W+A5_GAP/2, MB, ML+A5_W+A5_GAP/2, PAGE_H-MT)
-            canvas.setStrokeColor(GRAY_L); canvas.setLineWidth(0.3)
-            canvas.line(FX[1]-COL_GAP/2, MB, FX[1]-COL_GAP/2, PAGE_H-MT)
-            canvas.line(FX[3]-COL_GAP/2, MB, FX[3]-COL_GAP/2, PAGE_H-MT)
-            footers = [x for x in [cfg.get("footer1",""),cfg.get("footer2","")] if x]
-            if footers:
-                canvas.setFont("Helvetica", 5); canvas.setFillColor(GRAY)
-                canvas.drawCentredString(PAGE_W/2, MB/3, " · ".join(footers))
-            canvas.restoreState()
-        return _on_page
+    # ★ Función única on_page que usa canvas.getPageNumber() para decidir títulos.
+    # Todos los valores capturados como parámetros por defecto — sin closures.
+    _str_com  = f"COM — COMEDOR · {ano} · {periodo_label}"
+    _str_func = f"FUNC — FUNCIONAMENTO · {ano} · {periodo_label}"
+    _centro   = cfg.get("centro_nome", "")
+    _footers  = [x for x in [cfg.get("footer1",""), cfg.get("footer2","")] if x]
+    _logo_b64 = cfg.get("logo_base64", "")
+    _cx_l     = ML + A5_W/2
+    _cx_r     = ML + A5_W + A5_GAP + A5_W/2
+
+    def _on_any_page(canvas, doc,
+                     com=_str_com, func=_str_func,
+                     cxl=_cx_l, cxr=_cx_r,
+                     cen=_centro, fts=_footers,
+                     lb=_logo_b64, fgen=fecha_gen):
+        # Página 1: COM (izq) | FUNC (dcha)
+        # Página 2: FUNC (izq) | COM (dcha)
+        pnum = canvas.getPageNumber()
+        izq  = com  if pnum == 1 else func
+        dcha = func if pnum == 1 else com
+
+        canvas.saveState()
+        canvas.setFillColor(BLUE)
+        canvas.rect(ML, PAGE_H-MT, PAGE_W-ML-MR, MT, fill=1, stroke=0)
+        if lb:
+            try:
+                import base64 as _b64
+                img = ImageReader(io.BytesIO(_b64.b64decode(lb)))
+                canvas.drawImage(img, ML+0.1*cm, PAGE_H-MT+0.1*cm,
+                                 width=1.0*cm, height=1.2*cm,
+                                 preserveAspectRatio=True, mask="auto")
+            except Exception:
+                pass
+        canvas.setFillColor(colors.white); canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawCentredString(cxl, PAGE_H-MT+0.68*cm, izq)
+        canvas.drawCentredString(cxr, PAGE_H-MT+0.68*cm, dcha)
+        canvas.setFont("Helvetica", 6); canvas.setFillColor(colors.HexColor("#dbeafe"))
+        canvas.drawCentredString(cxl, PAGE_H-MT+0.22*cm, cen)
+        canvas.drawCentredString(cxr, PAGE_H-MT+0.22*cm, cen)
+        canvas.drawRightString(PAGE_W-MR-0.1*cm, PAGE_H-MT+0.22*cm, fgen)
+        canvas.setStrokeColor(GRAY); canvas.setLineWidth(0.8)
+        canvas.line(ML+A5_W+A5_GAP/2, MB, ML+A5_W+A5_GAP/2, PAGE_H-MT)
+        canvas.setStrokeColor(GRAY_L); canvas.setLineWidth(0.3)
+        canvas.line(FX[1]-COL_GAP/2, MB, FX[1]-COL_GAP/2, PAGE_H-MT)
+        canvas.line(FX[3]-COL_GAP/2, MB, FX[3]-COL_GAP/2, PAGE_H-MT)
+        if fts:
+            canvas.setFont("Helvetica", 5); canvas.setFillColor(GRAY)
+            canvas.drawCentredString(PAGE_W/2, MB/3, " · ".join(fts))
+        canvas.restoreState()
 
     def _build(fs):
         st = make_st(fs)
@@ -286,10 +301,8 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
                          topPadding=0, bottomPadding=0, id=fid)
         p1f = [mk_f(FX[0],"p1f0"),mk_f(FX[1],"p1f1"),mk_f(FX[2],"p1f2"),mk_f(FX[3],"p1f3")]
         p2f = [mk_f(FX[0],"p2f0"),mk_f(FX[1],"p2f1"),mk_f(FX[2],"p2f2"),mk_f(FX[3],"p2f3")]
-        pt1 = PageTemplate(id="p1", frames=p1f,
-                           onPage=_make_on_page(f"COM — {cl}", f"FUNC — {fl}"))
-        pt2 = PageTemplate(id="p2", frames=p2f,  # pax2: FUNC izq | COM dcha
-                           onPage=_make_on_page(f"FUNC — {fl}", f"COM — {cl}"))
+        pt1 = PageTemplate(id="p1", frames=p1f, onPage=_on_any_page)
+        pt2 = PageTemplate(id="p2", frames=p2f, onPage=_on_any_page)
         buf = io.BytesIO()
         doc = BaseDocTemplate(buf, pagesize=landscape(A4),
                               leftMargin=ML, rightMargin=MR,
