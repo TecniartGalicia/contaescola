@@ -288,7 +288,7 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
         p2f = [mk_f(FX[0],"p2f0"),mk_f(FX[1],"p2f1"),mk_f(FX[2],"p2f2"),mk_f(FX[3],"p2f3")]
         pt1 = PageTemplate(id="p1", frames=p1f,
                            onPage=_make_on_page(f"COM — {cl}", f"FUNC — {fl}"))
-        pt2 = PageTemplate(id="p2", frames=p2f,
+        pt2 = PageTemplate(id="p2", frames=p2f,  # pax2: FUNC izq | COM dcha
                            onPage=_make_on_page(f"FUNC — {fl}", f"COM — {cl}"))
         buf = io.BytesIO()
         doc = BaseDocTemplate(buf, pagesize=landscape(A4),
