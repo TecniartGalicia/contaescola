@@ -33,12 +33,9 @@ DARK   = colors.HexColor("#0f172a")
 
 # ── Generador PDF Cuadro Presentación ────────────────────────────
 def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
-                              movs_func: list, movs_com: list) -> bytes:
-    """
-    PDF díptico A4 landscape, doble cara = 4 hojas A5.
-    - Auto-sizing con medición real + retry hasta que cabe en 2 páginas
-    - FrameBreaks calculados dinámicamente según contenido real
-    """
+                              movs_func: list, movs_com: list,
+                              fs_override: float | None = None) -> bytes:
+    """PDF díptico A4 landscape — 4 hojas A5. fs_override=None → auto."""
     import math
     from reportlab.platypus import (
         BaseDocTemplate, PageTemplate, Frame,
@@ -46,6 +43,7 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
     )
     from reportlab.platypus.flowables import UseUpSpace
     from reportlab.lib.utils import ImageReader
+    from db.schema import CATEGORIAS_COM
 
     cfg = {k: get_cfg(k) for k in [
         "centro_nome","centro_direccion","centro_nif",
@@ -57,55 +55,35 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
     styles  = getSampleStyleSheet()
     PAGE_W, PAGE_H = landscape(A4)
 
-    ML = MR = 0.35*cm
-    MT      = 1.45*cm
-    MB      = 0.4*cm
-    A5_GAP  = 0.4*cm
-    COL_GAP = 0.18*cm
-
+    ML = MR = 0.35*cm; MT = 1.45*cm; MB = 0.4*cm
+    A5_GAP  = 0.4*cm;  COL_GAP = 0.18*cm
     A5_W    = (PAGE_W - ML - MR - A5_GAP) / 2
-    COL_W   = (A5_W   - COL_GAP) / 2
+    COL_W   = (A5_W - COL_GAP) / 2
     FRAME_H = PAGE_H - MT - MB
     FRAME_Y = MB
     GRAY_L  = colors.HexColor("#e2e8f0")
-
-    FX = [ML, ML+COL_W+COL_GAP,
-          ML+A5_W+A5_GAP, ML+A5_W+A5_GAP+COL_W+COL_GAP]
+    FX      = [ML, ML+COL_W+COL_GAP, ML+A5_W+A5_GAP, ML+A5_W+A5_GAP+COL_W+COL_GAP]
+    IW = 2.1*cm; NW = 1.05*cm
 
     periodo_label = trimestre if trimestre else "Anual"
     fecha_gen     = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    IW = 1.85*cm
-    NW = 1.05*cm
-
-    # ── Medición real de flowables ─────────────────────────────────
-    def _medir(flowables):
-        """Mide altura real de una lista de flowables."""
-        total = 0.0
-        avail_w = COL_W - 4  # padding L+R del frame
+    def _medir_raw(flowables):
+        h = 0.0
         for f in flowables:
             try:
-                _, h = f.wrap(avail_w, 9999*cm)
-                total += h
-                # spaceBefore/After del estilo del párrafo
+                _, fh = f.wrap(COL_W - 4, 9999*cm)
+                h += fh
                 if hasattr(f, 'style'):
-                    total += getattr(f.style, 'spaceBefore', 0) or 0
-                    total += getattr(f.style, 'spaceAfter',  0) or 0
-                # spaceBefore/After directos (HRFlowable, Spacer…)
-                else:
-                    total += getattr(f, 'spaceBefore', 0) or 0
-                    total += getattr(f, 'spaceAfter',  0) or 0
+                    h += getattr(f.style, 'spaceBefore', 0) or 0
+                    h += getattr(f.style, 'spaceAfter', 0) or 0
             except Exception:
-                total += 15
-        # Factor de seguridad: tabla split añade filas de cabecera extra
-        return total * 1.35
+                h += 12
+        return h
 
-    # ── Estilos ────────────────────────────────────────────────────
     def make_st(fs):
-        fsh = min(fs + 0.5, 8.0)
-        pad = max(1, int(fs * 0.18))
-        N   = styles["Normal"]
-        uid = f"_{fs:.1f}"
+        fsh = min(fs + 0.5, 8.0); pad = max(1, int(fs * 0.18))
+        N = styles["Normal"]; uid = f"_{fs:.1f}"
         def p(nm, bold=False, al=TA_LEFT, col=None, sb=0, sa=0, sz=None):
             s = ParagraphStyle(nm+uid, parent=N,
                                fontSize=sz or fs, leading=(sz or fs)+1.5,
@@ -113,51 +91,45 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
                                alignment=al, spaceBefore=sb, spaceAfter=sa)
             if col: s.textColor = col
             return s
-        return dict(
-            fs=fs, fsh=fsh, pad=pad,
-            sC   = p("sC"),
-            sCR  = p("sCR",  al=TA_RIGHT),
-            sCB  = p("sCB",  bold=True),
-            sCRB = p("sCRB", bold=True, al=TA_RIGHT),
-            sH   = p("sH",   bold=True, al=TA_CENTER,
-                     col=colors.white, sz=fsh),
-            sCod = p("sCod", bold=True,
-                     sb=max(2, int(fs*0.35)), sz=fsh),
-            sTit = p("sTit", bold=True, sa=1, sz=fsh+0.5),
-        )
+        return dict(fs=fs, fsh=fsh, pad=pad,
+                    sC=p("sC"), sCR=p("sCR",al=TA_RIGHT),
+                    sCB=p("sCB",bold=True), sCRB=p("sCRB",bold=True,al=TA_RIGHT),
+                    sH=p("sH",bold=True,al=TA_CENTER,col=colors.white,sz=fsh),
+                    sCod=p("sCod",bold=True,sb=max(2,int(fs*0.35)),sz=fsh),
+                    sTit=p("sTit",bold=True,sa=1,sz=fsh+0.5))
 
-    # ── Builders de contenido ──────────────────────────────────────
-    def _build_gastos(movs, st):
-        cw = [NW, COL_W - NW - IW, IW]
-        max_c = max(16, int((COL_W - NW - IW) / (st["fs"] * 0.53)))
-        elems = [
-            Paragraph("<b>GASTOS</b>", st["sTit"]),
-            HRFlowable(width="100%", thickness=0.8,
-                       color=DARK, spaceAfter=1),
-        ]
+    def _build_gastos(movs, st, agrupar_por="codigo"):
+        cw    = [NW, COL_W-NW-IW, IW]
+        max_c = max(16, int((COL_W-NW-IW) / (st["fs"]*0.53)))
+        elems = [Paragraph("<b>GASTOS</b>", st["sTit"]),
+                 HRFlowable(width="100%", thickness=0.8, color=DARK, spaceAfter=1)]
         grupos: dict = {}
         for m in movs:
             if m["tipo"] != "G": continue
-            grupos.setdefault(m.get("codigo","") or "—", []).append(m)
-
+            k = (m.get("categoria","") or "OUTROS") if agrupar_por=="categoria" \
+                else (m.get("codigo","") or "—")
+            grupos.setdefault(k, []).append(m)
+        if agrupar_por == "categoria":
+            claves = [c for c in CATEGORIAS_COM if c in grupos]
+            claves += [c for c in sorted(grupos) if c not in CATEGORIAS_COM]
+        else:
+            claves = sorted(grupos)
         total = 0.0
-        for cod in sorted(grupos):
-            desc = codigos_db.get(cod, cod)
-            ms   = grupos[cod]
-            sub  = sum(m["importe"] for m in ms)
-            total += sub
-            elems.append(Paragraph(f"<b>Código {cod}</b>  {desc}", st["sCod"]))
-            data = [[Paragraph("Nº",st["sH"]),
-                     Paragraph("CONCEPTO",st["sH"]),
+        for clave in claves:
+            ms  = grupos[clave]; sub = sum(m["importe"] for m in ms); total += sub
+            if agrupar_por == "categoria":
+                cab = f"<b>Categoría: {clave}</b>"; lbl = f"Total {clave.capitalize()}"
+            else:
+                desc = codigos_db.get(clave, clave)
+                cab = f"<b>Código {clave}</b>  {desc}"; lbl = f"Total código {clave}"
+            elems.append(Paragraph(cab, st["sCod"]))
+            data = [[Paragraph("Nº",st["sH"]), Paragraph("CONCEPTO",st["sH"]),
                      Paragraph("DEBE",st["sH"])]]
             for m in ms:
-                cli = (m.get("cliente_nome","") or
-                       m.get("concepto","") or "")[:max_c]
-                data.append([
-                    Paragraph(str(m.get("num","")), st["sC"]),
-                    Paragraph(cli, st["sC"]),
-                    Paragraph(fmt(m["importe"]), st["sCR"]),
-                ])
+                cli = (m.get("cliente_nome","") or m.get("concepto","") or "")[:max_c]
+                data.append([Paragraph(str(m.get("num","")),st["sC"]),
+                              Paragraph(cli,st["sC"]),
+                              Paragraph(fmt(m["importe"]),st["sCR"])])
             t = Table(data, colWidths=cw, repeatRows=1, splitByRow=1)
             t.setStyle(TableStyle([
                 ("BACKGROUND",    (0,0),(-1,0), DARK),
@@ -168,123 +140,94 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
                 ("GRID",          (0,0),(-1,-1), 0.2, GRAY_L),
             ]))
             elems.append(t)
-            sub_t = Table([[
-                Paragraph(f"<b>Total código {cod}</b>", st["sCB"]),
-                Paragraph(f"<b>{fmt(sub)}</b>", st["sCRB"]),
-            ]], colWidths=[COL_W-IW, IW])
-            sub_t.setStyle(TableStyle([
-                ("FONTSIZE",      (0,0),(-1,-1), st["fs"]),
-                ("TOPPADDING",    (0,0),(-1,-1), st["pad"]),
-                ("BOTTOMPADDING", (0,0),(-1,-1), st["pad"]),
-                ("LINEABOVE",     (0,0),(-1,-1), 0.4, DARK),
+            st_t = Table([[Paragraph(f"<b>{lbl}</b>",st["sCB"]),
+                           Paragraph(f"<b>{fmt(sub)}</b>",st["sCRB"])]],
+                         colWidths=[COL_W-IW, IW])
+            st_t.setStyle(TableStyle([
+                ("FONTSIZE",(0,0),(-1,-1),st["fs"]),
+                ("TOPPADDING",(0,0),(-1,-1),st["pad"]),
+                ("BOTTOMPADDING",(0,0),(-1,-1),st["pad"]),
+                ("LINEABOVE",(0,0),(-1,-1),0.4,DARK),
             ]))
-            elems.append(sub_t)
-            elems.append(Spacer(1, 0.04*cm))
-        tot = Table([[
-            Paragraph("<b>TOTAL GASTOS</b>", st["sCB"]),
-            Paragraph(f"<b>{fmt(total)}</b>", st["sCRB"]),
-        ]], colWidths=[COL_W-IW, IW])
+            elems.append(st_t); elems.append(Spacer(1, 0.04*cm))
+        tot = Table([[Paragraph("<b>TOTAL GASTOS</b>",st["sCB"]),
+                      Paragraph(f"<b>{fmt(total)}</b>",st["sCRB"])]],
+                    colWidths=[COL_W-IW, IW])
         tot.setStyle(TableStyle([
-            ("BACKGROUND",    (0,0),(-1,-1), BLUE),
-            ("TEXTCOLOR",     (0,0),(-1,-1), colors.white),
-            ("FONTSIZE",      (0,0),(-1,-1), st["fsh"]),
-            ("TOPPADDING",    (0,0),(-1,-1), 2),
-            ("BOTTOMPADDING", (0,0),(-1,-1), 2),
+            ("BACKGROUND",(0,0),(-1,-1),BLUE),("TEXTCOLOR",(0,0),(-1,-1),colors.white),
+            ("FONTSIZE",(0,0),(-1,-1),st["fsh"]),
+            ("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2),
         ]))
-        elems.append(tot)
-        return elems, total
+        elems.append(tot); return elems, total
 
     def _build_ingresos_resumo(movs, st, total_g, sal_ant):
-        cw    = [NW, COL_W - NW - IW, IW]
-        max_c = max(16, int((COL_W - NW - IW) / (st["fs"] * 0.53)))
-        elems = [
-            Paragraph("<b>INGRESOS</b>", st["sTit"]),
-            HRFlowable(width="100%", thickness=0.8,
-                       color=DARK, spaceAfter=1),
-        ]
-        movs_i  = [m for m in movs if m["tipo"]=="I"]
-        total_i = 0.0
+        cw    = [NW, COL_W-NW-IW, IW]
+        max_c = max(16, int((COL_W-NW-IW) / (st["fs"]*0.53)))
+        elems = [Paragraph("<b>INGRESOS</b>", st["sTit"]),
+                 HRFlowable(width="100%", thickness=0.8, color=DARK, spaceAfter=1)]
+        movs_i = [m for m in movs if m["tipo"]=="I"]; total_i = 0.0
         if movs_i:
-            data = [[Paragraph("Nº",st["sH"]),
-                     Paragraph("CONCEPTO",st["sH"]),
+            data = [[Paragraph("Nº",st["sH"]), Paragraph("CONCEPTO",st["sH"]),
                      Paragraph("HABER",st["sH"])]]
             for m in movs_i:
                 total_i += m["importe"]
-                cli = (m.get("cliente_nome","") or
-                       m.get("concepto","") or "")[:max_c]
-                data.append([
-                    Paragraph(str(m.get("num","")), st["sC"]),
-                    Paragraph(cli, st["sC"]),
-                    Paragraph(fmt(m["importe"]), st["sCR"]),
-                ])
+                cli = (m.get("cliente_nome","") or m.get("concepto","") or "")[:max_c]
+                data.append([Paragraph(str(m.get("num","")),st["sC"]),
+                              Paragraph(cli,st["sC"]),
+                              Paragraph(fmt(m["importe"]),st["sCR"])])
             t = Table(data, colWidths=cw, repeatRows=1, splitByRow=1)
             t.setStyle(TableStyle([
-                ("BACKGROUND",    (0,0),(-1,0), DARK),
-                ("FONTSIZE",      (0,0),(-1,-1), st["fs"]),
-                ("TOPPADDING",    (0,0),(-1,-1), st["pad"]),
-                ("BOTTOMPADDING", (0,0),(-1,-1), st["pad"]),
-                ("ROWBACKGROUNDS",(0,1),(-1,-1), [colors.white, PAPER]),
-                ("GRID",          (0,0),(-1,-1), 0.2, GRAY_L),
+                ("BACKGROUND",(0,0),(-1,0),DARK),
+                ("FONTSIZE",(0,0),(-1,-1),st["fs"]),
+                ("TOPPADDING",(0,0),(-1,-1),st["pad"]),
+                ("BOTTOMPADDING",(0,0),(-1,-1),st["pad"]),
+                ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,PAPER]),
+                ("GRID",(0,0),(-1,-1),0.2,GRAY_L),
             ]))
             elems.append(t)
         else:
             elems.append(Paragraph("Sen ingresos no período.", st["sC"]))
-        tot = Table([[
-            Paragraph("<b>TOTAL INGRESOS</b>", st["sCB"]),
-            Paragraph(f"<b>{fmt(total_i)}</b>", st["sCRB"]),
-        ]], colWidths=[COL_W-IW, IW])
+        tot = Table([[Paragraph("<b>TOTAL INGRESOS</b>",st["sCB"]),
+                      Paragraph(f"<b>{fmt(total_i)}</b>",st["sCRB"])]],
+                    colWidths=[COL_W-IW, IW])
         tot.setStyle(TableStyle([
-            ("BACKGROUND",    (0,0),(-1,-1), BLUE),
-            ("TEXTCOLOR",     (0,0),(-1,-1), colors.white),
-            ("FONTSIZE",      (0,0),(-1,-1), st["fsh"]),
-            ("TOPPADDING",    (0,0),(-1,-1), 2),
-            ("BOTTOMPADDING", (0,0),(-1,-1), 2),
+            ("BACKGROUND",(0,0),(-1,-1),BLUE),("TEXTCOLOR",(0,0),(-1,-1),colors.white),
+            ("FONTSIZE",(0,0),(-1,-1),st["fsh"]),
+            ("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2),
         ]))
         elems.append(tot)
-        # Resumo
-        dif = total_i - total_g
-        sf  = sal_ant + total_i - total_g
-        dc  = GREEN if dif >= 0 else RED
-        sc  = GREEN if sf  >= 0 else RED
-        N   = styles["Normal"]
-        uid = f"_r{st['fs']:.1f}"
+        dif = total_i-total_g; sf = sal_ant+total_i-total_g
+        dc = GREEN if dif>=0 else RED; sc = GREEN if sf>=0 else RED
+        N = styles["Normal"]; uid = f"_r{st['fs']:.1f}"
+        RW = IW + 0.3*cm
         def rp(nm, bold=False, al=TA_LEFT, col=None):
-            s = ParagraphStyle(nm+uid, parent=N,
-                               fontSize=st["fsh"], leading=st["fsh"]+2,
+            s = ParagraphStyle(nm+uid, parent=N, fontSize=st["fsh"],
+                               leading=st["fsh"]+2,
                                fontName="Helvetica-Bold" if bold else "Helvetica",
                                alignment=al)
             if col: s.textColor = col
             return s
         elems.append(Spacer(1, 0.15*cm))
-        elems.append(HRFlowable(width="100%", thickness=1,
-                                color=BLUE, spaceAfter=2))
+        elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=2))
         elems.append(Paragraph("<b>RESUMO BALANCE</b>", st["sTit"]))
         res_t = Table([
-            [Paragraph("Saldo anterior",    rp("a")),
-             Paragraph(fmt(sal_ant),        rp("ar",al=TA_RIGHT))],
-            [Paragraph("Total ingresos",    rp("b")),
-             Paragraph(fmt(total_i),        rp("br",al=TA_RIGHT))],
-            [Paragraph("Total gastos",      rp("c")),
-             Paragraph(fmt(total_g),        rp("cr",al=TA_RIGHT))],
-            [Paragraph("<b>Diferenza</b>",  rp("d",bold=True)),
+            [Paragraph("Saldo anterior",rp("a")), Paragraph(fmt(sal_ant),rp("ar",al=TA_RIGHT))],
+            [Paragraph("Total ingresos",rp("b")), Paragraph(fmt(total_i),rp("br",al=TA_RIGHT))],
+            [Paragraph("Total gastos",  rp("c")), Paragraph(fmt(total_g),rp("cr",al=TA_RIGHT))],
+            [Paragraph("<b>Diferenza</b>",rp("d",bold=True)),
              Paragraph(f"<b>{fmt(dif)}</b>",rp("dr",bold=True,al=TA_RIGHT,col=dc))],
             [Paragraph("<b>Saldo final</b>",rp("e",bold=True)),
-             Paragraph(f"<b>{fmt(sf)}</b>", rp("er",bold=True,al=TA_RIGHT,col=sc))],
-        ], colWidths=[COL_W-IW, IW])
+             Paragraph(f"<b>{fmt(sf)}</b>",rp("er",bold=True,al=TA_RIGHT,col=sc))],
+        ], colWidths=[COL_W-RW, RW])
         res_t.setStyle(TableStyle([
-            ("FONTSIZE",      (0,0),(-1,-1), st["fsh"]),
-            ("TOPPADDING",    (0,0),(-1,-1), 2),
-            ("BOTTOMPADDING", (0,0),(-1,-1), 2),
-            ("LINEBELOW",     (0,0),(-1,0),  0.3, GRAY_L),
-            ("LINEBELOW",     (0,2),(-1,2),  0.3, GRAY_L),
-            ("BACKGROUND",    (0,3),(-1,3),  colors.HexColor("#f0fdf4")),
-            ("BACKGROUND",    (0,4),(-1,4),  BLUE_L),
-            ("LINEABOVE",     (0,4),(-1,4),  1.2, BLUE),
+            ("FONTSIZE",(0,0),(-1,-1),st["fsh"]),
+            ("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2),
+            ("LINEBELOW",(0,0),(-1,0),0.3,GRAY_L),("LINEBELOW",(0,2),(-1,2),0.3,GRAY_L),
+            ("BACKGROUND",(0,3),(-1,3),colors.HexColor("#f0fdf4")),
+            ("BACKGROUND",(0,4),(-1,4),BLUE_L),("LINEABOVE",(0,4),(-1,4),1.2,BLUE),
         ]))
-        elems.append(res_t)
-        return elems
+        elems.append(res_t); return elems
 
-    # ── Cabecera canvas ────────────────────────────────────────────
     def _make_on_page(lbl_izq, lbl_dcha):
         def _on_page(canvas, doc):
             canvas.saveState()
@@ -293,130 +236,89 @@ def _gen_cuadro_presentacion(ano: int, trimestre: str | None,
             if cfg.get("logo_base64"):
                 try:
                     import base64 as _b64
-                    img = ImageReader(
-                        io.BytesIO(_b64.b64decode(cfg["logo_base64"])))
+                    img = ImageReader(io.BytesIO(_b64.b64decode(cfg["logo_base64"])))
                     canvas.drawImage(img, ML+0.1*cm, PAGE_H-MT+0.1*cm,
                                      width=1.0*cm, height=1.2*cm,
                                      preserveAspectRatio=True, mask="auto")
                 except Exception:
                     pass
-            cx_l = ML + A5_W/2
-            cx_r = ML + A5_W + A5_GAP + A5_W/2
-            canvas.setFillColor(colors.white)
-            canvas.setFont("Helvetica-Bold", 8)
+            cx_l = ML+A5_W/2; cx_r = ML+A5_W+A5_GAP+A5_W/2
+            canvas.setFillColor(colors.white); canvas.setFont("Helvetica-Bold", 8)
             canvas.drawCentredString(cx_l, PAGE_H-MT+0.68*cm, lbl_izq)
             canvas.drawCentredString(cx_r, PAGE_H-MT+0.68*cm, lbl_dcha)
-            canvas.setFont("Helvetica", 6)
-            canvas.setFillColor(colors.HexColor("#dbeafe"))
+            canvas.setFont("Helvetica", 6); canvas.setFillColor(colors.HexColor("#dbeafe"))
             centro = cfg.get("centro_nome","")
             canvas.drawCentredString(cx_l,  PAGE_H-MT+0.22*cm, centro)
             canvas.drawCentredString(cx_r,  PAGE_H-MT+0.22*cm, centro)
-            canvas.drawRightString(PAGE_W-MR-0.1*cm,
-                                   PAGE_H-MT+0.22*cm, fecha_gen)
-            canvas.setStrokeColor(GRAY)
-            canvas.setLineWidth(0.8)
+            canvas.drawRightString(PAGE_W-MR-0.1*cm, PAGE_H-MT+0.22*cm, fecha_gen)
+            canvas.setStrokeColor(GRAY); canvas.setLineWidth(0.8)
             canvas.line(ML+A5_W+A5_GAP/2, MB, ML+A5_W+A5_GAP/2, PAGE_H-MT)
-            canvas.setStrokeColor(GRAY_L)
-            canvas.setLineWidth(0.3)
+            canvas.setStrokeColor(GRAY_L); canvas.setLineWidth(0.3)
             canvas.line(FX[1]-COL_GAP/2, MB, FX[1]-COL_GAP/2, PAGE_H-MT)
             canvas.line(FX[3]-COL_GAP/2, MB, FX[3]-COL_GAP/2, PAGE_H-MT)
-            footers = [x for x in [cfg.get("footer1",""),
-                                    cfg.get("footer2","")] if x]
+            footers = [x for x in [cfg.get("footer1",""),cfg.get("footer2","")] if x]
             if footers:
-                canvas.setFont("Helvetica", 5)
-                canvas.setFillColor(GRAY)
+                canvas.setFont("Helvetica", 5); canvas.setFillColor(GRAY)
                 canvas.drawCentredString(PAGE_W/2, MB/3, " · ".join(footers))
             canvas.restoreState()
         return _on_page
 
-    # ── Construir con un fs dado ───────────────────────────────────
     def _build(fs):
-        st_f = make_st(fs)
-        st_c = make_st(fs)
+        st = make_st(fs)
+        sal_f = get_saldo(ano, "func"); sal_c = get_saldo(ano, "com")
+        fg, tgf = _build_gastos(movs_func, st, "codigo")
+        fi      = _build_ingresos_resumo(movs_func, st, tgf, sal_f)
+        cg, tgc = _build_gastos(movs_com,  st, "categoria")
+        ci      = _build_ingresos_resumo(movs_com,  st, tgc, sal_c)
 
-        sal_f = get_saldo(ano, "func")
-        sal_c = get_saldo(ano, "com")
-
-        fg, tgf = _build_gastos(movs_func, st_f)
-        fi      = _build_ingresos_resumo(movs_func, st_f, tgf, sal_f)
-        cg, tgc = _build_gastos(movs_com,  st_c)
-        ci      = _build_ingresos_resumo(movs_com,  st_c, tgc, sal_c)
-
-        # ── Calcular FrameBreaks necesarios ────────────────────────
-        # COM_ING ocupa frames 0,1 (H4). FUNC ocupa frames 2-5 (H1+H2).
-        # COM_GAS ocupa frames 6,7 (H3).
-        # Frames por área calculados con medición + factor seguridad.
-
-        ci_h  = _medir(ci)
+        ci_h  = _medir_raw(ci)
         ci_fr = min(2, max(1, math.ceil(ci_h / FRAME_H)))
-        # Pares UseUpSpace+FrameBreak para llegar a frame 2 desde frame ci_fr-1:
-        fb_after_ci = 3 - ci_fr   # ci_fr=1→2 pares, ci_fr=2→1 par
-
-        func_h  = _medir(fg + fi)
+        fb_after_ci = max(1, 3 - ci_fr)
+        func_h  = _medir_raw(fg + fi)
         func_fr = min(4, max(1, math.ceil(func_h / FRAME_H)))
-        # FUNC empieza en frame 2, termina en 2+func_fr-1
-        # Necesitamos llegar al frame 6 (inicio H3)
-        func_end = 2 + func_fr - 1
-        fb_after_func = max(1, 6 - func_end)
+        fb_after_func = max(1, 6 - (2 + func_fr - 1))
 
-        # ── Construir documento ─────────────────────────────────────
         fl = f"FUNCIONAMENTO · {ano} · {periodo_label}"
         cl = f"COMEDOR · {ano} · {periodo_label}"
-
-        def mk_frame(x, fid):
+        def mk_f(x, fid):
             return Frame(x, FRAME_Y, COL_W, FRAME_H,
                          leftPadding=2, rightPadding=2,
                          topPadding=0, bottomPadding=0, id=fid)
-
-        p1_frames = [mk_frame(FX[0],"p1f0"), mk_frame(FX[1],"p1f1"),
-                     mk_frame(FX[2],"p1f2"), mk_frame(FX[3],"p1f3")]
-        p2_frames = [mk_frame(FX[0],"p2f0"), mk_frame(FX[1],"p2f1"),
-                     mk_frame(FX[2],"p2f2"), mk_frame(FX[3],"p2f3")]
-
-        pt1 = PageTemplate(id="p1", frames=p1_frames,
+        p1f = [mk_f(FX[0],"p1f0"),mk_f(FX[1],"p1f1"),mk_f(FX[2],"p1f2"),mk_f(FX[3],"p1f3")]
+        p2f = [mk_f(FX[0],"p2f0"),mk_f(FX[1],"p2f1"),mk_f(FX[2],"p2f2"),mk_f(FX[3],"p2f3")]
+        pt1 = PageTemplate(id="p1", frames=p1f,
                            onPage=_make_on_page(f"COM — {cl}", f"FUNC — {fl}"))
-        pt2 = PageTemplate(id="p2", frames=p2_frames,
+        pt2 = PageTemplate(id="p2", frames=p2f,
                            onPage=_make_on_page(f"FUNC — {fl}", f"COM — {cl}"))
-
         buf = io.BytesIO()
         doc = BaseDocTemplate(buf, pagesize=landscape(A4),
                               leftMargin=ML, rightMargin=MR,
                               topMargin=MT, bottomMargin=MB,
                               pageTemplates=[pt1, pt2])
-
-        flowables = [NextPageTemplate("p1")]
-
-        # H4: COM ingresos+resumo (frames 0,1)
-        flowables.extend(ci)
+        fl_items = [NextPageTemplate("p1")]
+        fl_items.extend(ci)
         for _ in range(fb_after_ci):
-            flowables.append(UseUpSpace())
-            flowables.append(FrameBreak())
-
-        # H1+H2: FUNC gastos+ingresos (frames 2,3,4,5)
-        flowables.extend(fg)
-        flowables.extend(fi)
+            fl_items.append(UseUpSpace()); fl_items.append(FrameBreak())
+        fl_items.extend(fg); fl_items.extend(fi)
         for _ in range(fb_after_func):
-            flowables.append(UseUpSpace())
-            flowables.append(FrameBreak())
+            fl_items.append(UseUpSpace()); fl_items.append(FrameBreak())
+        fl_items.extend(cg)
+        doc.build(fl_items)
+        return buf.getvalue(), doc.page
 
-        # H3: COM gastos (frames 6,7)
-        flowables.extend(cg)
-
-        doc.build(flowables)
-        n_pages = doc.page   # páginas reales generadas
-        return buf.getvalue(), n_pages
-
-    # ── Retry hasta que cabe en 2 páginas ─────────────────────────
+    if fs_override is not None:
+        try:
+            pdf_bytes, _ = _build(fs_override); return pdf_bytes
+        except Exception:
+            pass
     last_pdf = None
     for fs in [7.5, 7.0, 6.5, 6.0, 5.5, 5.0, 4.5, 4.0, 3.5, 3.0]:
         try:
             pdf_bytes, n_pages = _build(fs)
             last_pdf = pdf_bytes
-            if n_pages <= 2:
-                return pdf_bytes
+            if n_pages <= 2: return pdf_bytes
         except Exception:
             continue
-
     return last_pdf or b""
 
 
@@ -535,70 +437,130 @@ def render(ano: int) -> None:
     # ── TAB 2: Cuadro Presentación Contas ─────────────────────────
     with tab_cuadro:
         st.subheader("🖨️ Cuadro de Presentación de Contas")
-        st.markdown(
-            '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;'
-            'padding:8px 12px;font-size:12px;color:#1e3a5f;margin-bottom:12px">'
-            'Xera un PDF díptico A4 horizontal con os balances de '
-            '<strong>Funcionamento e Comedor</strong>: gastos por código, '
-            'ingresos e resumo balance. Listo para imprimir e presentar.</div>',
-            unsafe_allow_html=True,
-        )
 
         c1, c2 = st.columns(2)
-        ano_sel  = c1.selectbox("📅 Ano natural", anos,
-                                index=anos.index(ano) if ano in anos else len(anos)-1,
-                                key="cuadro_ano")
+        ano_sel   = c1.selectbox("📅 Ano natural", anos,
+                                 index=anos.index(ano) if ano in anos else len(anos)-1,
+                                 key="cuadro_ano")
         trim_opts = ["Anual (todo o ano)"] + PERIODOS
         trim_sel  = c2.selectbox("📆 Trimestre", trim_opts, key="cuadro_trim")
         trimestre = None if trim_sel.startswith("Anual") else trim_sel
 
-        # Preview de saldos
-        sal_f = get_saldo(ano_sel, "func")
-        sal_c = get_saldo(ano_sel, "com")
-        cc1, cc2 = st.columns(2)
-        cc1.metric("Saldo anterior Funcionamento", fmt(sal_f))
-        cc2.metric("Saldo anterior Comedor",       fmt(sal_c))
+        # Cargar movimientos reactivos
+        pf: dict = {"area": "func", "ano": ano_sel}
+        pc: dict = {"area": "com",  "ano": ano_sel}
+        if trimestre:
+            pf["periodo"] = trimestre; pc["periodo"] = trimestre
+        movs_f = get_informes(pf); movs_c = get_informes(pc)
+        sal_f  = get_saldo(ano_sel, "func"); sal_c = get_saldo(ano_sel, "com")
+
+        # ── Controles ─────────────────────────────────────────────
+        st.divider()
+        ctrl1, ctrl2 = st.columns(2)
+        fs_prev = ctrl1.slider("Texto preview (px)", 8, 15, 10, key="cuadro_fs_prev")
+        fs_pdf  = ctrl2.slider("Texto PDF (pt) — 0=Auto", 0, 14, 0, step=1,
+                               key="cuadro_fs_pdf",
+                               help="0=automático ajusta para caber en 2 páxinas")
+
+        # ── Preview 4 páginas A5 ───────────────────────────────────
+        def _prev(movs_area, modo, sal_ant):
+            """Genera HTML de una columna A5."""
+            from db.schema import CATEGORIAS_COM as CATS
+            cdb = {c["codigo"]: c["descripcion"] for c in get_codigos(solo_activos=False)}
+            fs  = fs_prev
+            h   = f"<div style='font-size:{fs}px;font-family:sans-serif;line-height:1.3'>"
+
+            if modo == "ingresos":
+                movs_i = [m for m in movs_area if m["tipo"]=="I"]
+                ti = sum(m["importe"] for m in movs_i)
+                tg = sum(m["importe"] for m in movs_area if m["tipo"]=="G")
+                h += "<b>INGRESOS</b><br/>"
+                h += "<table style='width:100%;border-collapse:collapse'>"
+                h += "<tr style='background:#374151;color:white'><td style='width:16%;padding:1px 2px'><b>Nº</b></td><td style='padding:1px 2px'><b>Concepto</b></td><td style='width:28%;text-align:right;padding:1px 2px'><b>Haber</b></td></tr>"
+                for i, m in enumerate(movs_i):
+                    bg  = "#f8f7f4" if i%2 else "white"
+                    cli = (m.get("cliente_nome","") or m.get("concepto","") or "")[:25]
+                    h  += f"<tr style='background:{bg}'><td style='padding:1px 2px'>{m.get('num','')}</td><td style='padding:1px 2px'>{cli}</td><td style='text-align:right;padding:1px 2px'>{fmt(m['importe'])}</td></tr>"
+                h += f"<tr style='background:#dbeafe;font-weight:bold'><td colspan='2'>TOTAL ING.</td><td style='text-align:right'>{fmt(ti)}</td></tr></table>"
+                dif = ti-tg; sf = sal_ant+ti-tg
+                dc = "#166534" if dif>=0 else "#991b1b"; sc = "#166534" if sf>=0 else "#991b1b"
+                h += f"<div style='margin-top:6px;border-top:2px solid #1e40af;padding:3px;background:#f0f9ff;font-size:{fs}px'><b>RESUMO</b><br/>Sal. ant: <b>{fmt(sal_ant)}</b><br/>Ingresos: <b>{fmt(ti)}</b><br/>Gastos: <b>{fmt(tg)}</b><br/>Dif: <b style='color:{dc}'>{fmt(dif)}</b><br/>Sal. final: <b style='color:{sc}'>{fmt(sf)}</b></div>"
+                h += "</div>"; return h
+
+            grupos: dict = {}
+            for m in movs_area:
+                if m["tipo"] != "G": continue
+                k = (m.get("categoria","") or "OUTROS") if modo=="cat" else (m.get("codigo","") or "—")
+                grupos.setdefault(k, []).append(m)
+            claves = ([c for c in CATS if c in grupos] + [c for c in sorted(grupos) if c not in CATS])                      if modo=="cat" else sorted(grupos)
+            tg = 0.0
+            h += "<b>GASTOS</b><br/>"
+            for clave in claves:
+                ms  = grupos[clave]; sub = sum(m["importe"] for m in ms); tg += sub
+                cab = f"Cat: {clave}" if modo=="cat" else f"Cód.{clave} {cdb.get(clave,'')[:18]}"
+                h += f"<div style='background:#1e3a5f;color:white;padding:1px 2px;margin-top:3px;font-weight:bold'>{cab}</div>"
+                h += "<table style='width:100%;border-collapse:collapse'>"
+                h += "<tr style='background:#374151;color:white'><td style='width:16%;padding:1px 2px'><b>Nº</b></td><td style='padding:1px 2px'><b>Concepto</b></td><td style='width:28%;text-align:right;padding:1px 2px'><b>Debe</b></td></tr>"
+                for i, m in enumerate(ms):
+                    bg = "#f8f7f4" if i%2 else "white"
+                    cli = (m.get("cliente_nome","") or m.get("concepto","") or "")[:25]
+                    h  += f"<tr style='background:{bg}'><td style='padding:1px 2px'>{m.get('num','')}</td><td style='padding:1px 2px'>{cli}</td><td style='text-align:right;padding:1px 2px'>{fmt(m['importe'])}</td></tr>"
+                h += f"<tr style='background:#f1f5f9;font-weight:bold'><td colspan='2'>Total {clave[:12]}</td><td style='text-align:right'>{fmt(sub)}</td></tr></table>"
+            h += f"<div style='background:#1e40af;color:white;font-weight:bold;padding:2px;margin-top:2px'>TOTAL GASTOS: {fmt(tg)}</div>"
+            h += "</div>"; return h
+
+        # Layout 4 columnas: H4 | H1 || H2 | H3
+        st.markdown(
+            "<div style='display:grid;grid-template-columns:1fr 2px 1fr 6px 1fr 2px 1fr;"
+            "gap:0;margin-bottom:4px'>"
+            "<div style='background:#1e40af;color:white;text-align:center;font-size:9px;"
+            "padding:2px;font-weight:bold'>H4 — COM ingresos</div>"
+            "<div style='background:#94a3b8'></div>"
+            "<div style='background:#1e40af;color:white;text-align:center;font-size:9px;"
+            "padding:2px;font-weight:bold'>H1 — FUNC gastos</div>"
+            "<div style='background:#1e40af'></div>"
+            "<div style='background:#0f172a;color:white;text-align:center;font-size:9px;"
+            "padding:2px;font-weight:bold'>H2 — FUNC ingresos</div>"
+            "<div style='background:#94a3b8'></div>"
+            "<div style='background:#0f172a;color:white;text-align:center;font-size:9px;"
+            "padding:2px;font-weight:bold'>H3 — COM gastos</div>"
+            "</div>"
+            "<div style='font-size:8px;color:#64748b;margin-bottom:6px'>"
+            "◀ PÁXINA 1 FRENTE ▶&nbsp;&nbsp;&nbsp;&nbsp;"
+            "◀ PÁXINA 2 DORSO ▶</div>",
+            unsafe_allow_html=True,
+        )
+
+        h4, h1, h2, h3 = st.columns(4)
+        with h4:
+            st.markdown(_prev(movs_c, "ingresos", sal_c), unsafe_allow_html=True)
+        with h1:
+            st.markdown(_prev(movs_f, "cod", sal_f), unsafe_allow_html=True)
+        with h2:
+            st.markdown(_prev(movs_f, "ingresos", sal_f), unsafe_allow_html=True)
+        with h3:
+            st.markdown(_prev(movs_c, "cat", sal_c), unsafe_allow_html=True)
+
+        # ── Métricas ───────────────────────────────────────────────
+        st.divider()
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric("Movementos Func", len(movs_f))
+        mc2.metric("Movementos Com",  len(movs_c))
+        mc3.metric("Saldo ant. Func", fmt(sal_f))
+        mc4.metric("Saldo ant. Com",  fmt(sal_c))
 
         st.divider()
-
+        fs_pdf_val = float(fs_pdf) if fs_pdf > 0 else None
         if st.button("📄 Xerar PDF Cuadro Presentación",
                      type="primary", use_container_width=True, key="btn_cuadro"):
             with st.spinner("Xerando PDF díptico..."):
-                # Cargar movimientos filtrados
-                params_f: dict = {"area": "func", "ano": ano_sel}
-                params_c: dict = {"area": "com",  "ano": ano_sel}
-                if trimestre:
-                    params_f["periodo"] = trimestre
-                    params_c["periodo"] = trimestre
-
-                movs_func = get_informes(params_f)
-                movs_com  = get_informes(params_c)
-
                 pdf_bytes = _gen_cuadro_presentacion(
-                    ano_sel, trimestre, movs_func, movs_com)
-
-                trim_label = trimestre.replace("º TRIMESTRE","T").replace(" ","") if trimestre else "Anual"
+                    ano_sel, trimestre, movs_f, movs_c,
+                    fs_override=fs_pdf_val)
+                trim_label = (trimestre.replace("º TRIMESTRE","T").replace(" ","")
+                              if trimestre else "Anual")
                 fname = f"Cuadro_Contas_{ano_sel}_{trim_label}.pdf"
-
             st.success("✅ PDF xerado!")
-            st.download_button(
-                "⬇️ Descargar Cuadro Presentación",
-                data=pdf_bytes,
-                file_name=fname,
-                mime="application/pdf",
-                key="dl_cuadro",
-            )
-
-            # Preview de movimientos incluidos
-            with st.expander("Ver movementos incluídos", expanded=False):
-                col_f, col_c = st.columns(2)
-                with col_f:
-                    st.caption(f"Funcionamento: {len(movs_func)} movementos")
-                    gf = sum(m["importe"] for m in movs_func if m["tipo"]=="G")
-                    hf = sum(m["importe"] for m in movs_func if m["tipo"]=="I")
-                    st.caption(f"Gastos: {fmt(gf)} · Ingresos: {fmt(hf)}")
-                with col_c:
-                    st.caption(f"Comedor: {len(movs_com)} movementos")
-                    gc = sum(m["importe"] for m in movs_com if m["tipo"]=="G")
-                    hc = sum(m["importe"] for m in movs_com if m["tipo"]=="I")
-                    st.caption(f"Gastos: {fmt(gc)} · Ingresos: {fmt(hc)}")
+            st.download_button("⬇️ Descargar Cuadro Presentación",
+                data=pdf_bytes, file_name=fname,
+                mime="application/pdf", key="dl_cuadro")
