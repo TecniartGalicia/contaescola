@@ -4,7 +4,14 @@ db/schema.py
 from .connection import get_con
 
 PERIODOS = ["1º TRIMESTRE", "2º TRIMESTRE", "3º TRIMESTRE", "4º TRIMESTRE"]
-CATEGORIAS_COM = ["ALIMENTACION", "LIMPEZA", "COMBUSTIBLE", "MANTEMENTO", "OUTROS"]
+
+# Categorías de comedor, na orde do impreso oficial "Balance de comedores escolares".
+# REPOSICIONS non se usa: queda fóra da app e da plantilla por decisión do centro.
+CATEGORIAS_COM_GASTO   = ["ALIMENTACION", "COMBUSTIBLE", "LIMPEZA",
+                          "UTENSILIOS/MAQUINARIA", "OUTROS", "MANTEMENTO"]
+CATEGORIAS_COM_INGRESO = ["CONSELLERÍA", "OUTROS"]
+CATEGORIAS_COM = CATEGORIAS_COM_GASTO + ["CONSELLERÍA"]
+
 UMBRAL_347 = 3005.06
 
 DDL = """
