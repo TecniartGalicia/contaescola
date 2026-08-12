@@ -8,7 +8,18 @@ jobs:
     steps:
       - name: Trigger Coolify Deploy
         run: |
-          curl -X POST \
+          # Sen comprobar o código HTTP, un token caducado devolve 401 e o
+          # workflow segue marcando "success": foi o que pasou entre maio e
+          # agosto de 2026, con todos os despregues silenciosamente perdidos.
+          resposta=$(curl -sS -w '\n%{http_code}' -X POST \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "http://178.104.59.198:8000/api/v1/deploy?uuid=jx3ebxis3nyojukvasofysak&force=false"
+            "http://178.104.59.198:8000/api/v1/deploy?uuid=jx3ebxis3nyojukvasofysak&force=false")
+          codigo=$(echo "$resposta" | tail -n1)
+          corpo=$(echo "$resposta" | sed '$d')
+          echo "HTTP $codigo"
+          echo "$corpo"
+          if [ "$codigo" -lt 200 ] || [ "$codigo" -ge 300 ]; then
+            echo "::error::Coolify rexeitou o despregue (HTTP $codigo). Renova o segredo COOLIFY_TOKEN."
+            exit 1
+          fi

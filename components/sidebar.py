@@ -13,6 +13,7 @@ PAGES = [
     ("⚖️", "Balance Funcionamento", "funcbal"),
     ("🍽️", "Diario Comedor",        "com"),
     ("⚖️", "Balance Comedor",       "combal"),
+    ("📄", "Balance Consellería",   "combce"),
     ("📋", "Partidas Finalistas",   "part"),
     ("🎓", "Becas NEAE",            "becas"),
     ("📈", "Informes e Filtros",    "inf"),

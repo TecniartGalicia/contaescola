@@ -118,6 +118,24 @@ CREATE TABLE IF NOT EXISTS diario (
     cliente_id       INTEGER REFERENCES clientes(id),
     creado_en        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS balances_comedor (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    curso_id            INTEGER NOT NULL REFERENCES cursos(id) ON DELETE CASCADE,
+    trimestre           TEXT    NOT NULL,
+    periodo_txt         TEXT    NOT NULL DEFAULT '',
+    ano                 INTEGER NOT NULL,
+    num_desde           INTEGER NOT NULL,
+    num_ata             INTEGER NOT NULL,
+    dias_funcionamento  INTEGER NOT NULL DEFAULT 0,
+    saldo_inicial       REAL    NOT NULL DEFAULT 0,
+    existencias         REAL    NOT NULL DEFAULT 0,
+    outros_ingresos_txt TEXT    NOT NULL DEFAULT '',
+    outros_gastos_txt   TEXT    NOT NULL DEFAULT '',
+    data_sinatura       TEXT    NOT NULL DEFAULT '',
+    snapshot_json       TEXT    NOT NULL DEFAULT '',
+    creado_en           TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(curso_id, trimestre)
+);
 CREATE INDEX IF NOT EXISTS idx_diario_ano_area  ON diario(ano, area);
 CREATE INDEX IF NOT EXISTS idx_diario_curso     ON diario(curso_id);
 CREATE INDEX IF NOT EXISTS idx_diario_cliente   ON diario(cliente_id);
@@ -130,6 +148,8 @@ DATOS_INICIALES = {
         ("ano_activo","2026"),("centro_nome","Centro Educativo"),
         ("centro_direccion",""),("centro_nif",""),
         ("footer1","Documento xerado por ContaEscola"),("footer2",""),("logo_base64",""),
+        # Balance de comedor
+        ("comedor_conta","***4506"),("comedor_tipo","C"),("comedor_lugar","Chantada"),
     ],
     "anos": [2025, 2026],
     "saldos": [

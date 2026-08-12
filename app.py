@@ -13,7 +13,7 @@ from views.exportar import check_backup_automatico, render_backup_notificacion
 
 from views import (dashboard, diario, balance, partidas, becas,
                    informes, modelo_347, clientes, alumnos,
-                   maestras, cfg_pdf, exportar)
+                   maestras, cfg_pdf, exportar, balance_comedor)
 
 st.set_page_config(
     page_title="ContaEscola",
@@ -109,6 +109,7 @@ ROUTES = {
     "funcbal": lambda: balance.render("func", ano, cur_id),
     "com":     lambda: diario.render("com",  ano, cur_id),
     "combal":  lambda: balance.render("com",  ano, cur_id),
+    "combce":  lambda: balance_comedor.render(ano, cur_id),
     "part":    lambda: partidas.render(ano, cur_id),
     "becas":   lambda: becas.render(ano, cur_id),
     "inf":     lambda: informes.render(ano),
