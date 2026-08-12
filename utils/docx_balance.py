@@ -48,37 +48,62 @@ def _norm(txt: str) -> str:
 
 
 def _escribir(cela, texto: str) -> None:
-    """Escribe nunha cela conservando o formato do primeiro run."""
+    """
+    Escribe nunha cela conservando o formato do primeiro run.
+
+    A plantilla marca en vermello o que enche a aplicación e en azul o que enche
+    a usuaria. Esas marcas son indicacións de traballo, non parte do documento:
+    todo o que se escribe sae en negro para que o balance quede homoxéneo.
+    """
+    from docx.shared import RGBColor
+    NEGRO = RGBColor(0, 0, 0)
+
     par = cela.paragraphs[0]
-    if par.runs:
-        par.runs[0].text = texto
-        for r in par.runs[1:]:
-            r.text = ""
-    else:
-        par.add_run(texto)
-    for p in cela.paragraphs[1:]:      # limpar parágrafos sobrantes
+    primeiro = par.runs[0] if par.runs else par.add_run("")
+    primeiro.text = texto
+    # python-docx devolve obxectos Run novos en cada acceso a .runs, así que a
+    # comparación ten que ser polo elemento XML, que si é estable.
+    conservar = primeiro._element
+    for p in cela.paragraphs:
         for r in p.runs:
-            r.text = ""
+            if r._element is not conservar:
+                r.text = ""
+            try:
+                r.font.color.rgb = NEGRO
+            except Exception:
+                pass
+
+
+def _localizar(tabla, etiqueta: str, exacta: bool = True):
+    """
+    Busca a etiqueta en calquera columna da táboa e devolve (fila, índice_da_cela).
+
+    Non abonda con mirar a primeira columna: na táboa de cabeceira as etiquetas
+    ("CURSO:", "Días de funcionamento:") están na columna do medio.
+    """
+    obxectivo = _norm(etiqueta)
+    for fila in tabla.rows:
+        for i, cela in enumerate(fila.cells):
+            actual = _norm(cela.text)
+            if (actual == obxectivo) if exacta else actual.startswith(obxectivo):
+                return fila, i
+    return None, None
 
 
 def _fila_por_etiqueta(tabla, etiqueta: str, exacta: bool = True):
-    """Devolve a fila cuxa primeira cela coincide coa etiqueta."""
-    obxectivo = _norm(etiqueta)
-    for fila in tabla.rows:
-        actual = _norm(fila.cells[0].text)
-        if (actual == obxectivo) if exacta else actual.startswith(obxectivo):
-            return fila
-    return None
+    return _localizar(tabla, etiqueta, exacta)[0]
 
 
 def _set(tabla, etiqueta: str, valor: str, exacta: bool = True,
-         col: int = -1, nova_etiqueta: str | None = None) -> bool:
-    fila = _fila_por_etiqueta(tabla, etiqueta, exacta)
+         nova_etiqueta: str | None = None) -> bool:
+    """Escribe o valor na cela seguinte á da etiqueta. False se non atopa a etiqueta."""
+    fila, i = _localizar(tabla, etiqueta, exacta)
     if fila is None:
         return False
     if nova_etiqueta is not None:
-        _escribir(fila.cells[0], nova_etiqueta)
-    _escribir(fila.cells[col], valor)
+        _escribir(fila.cells[i], nova_etiqueta)
+    destino = i + 1 if i + 1 < len(fila.cells) else len(fila.cells) - 1
+    _escribir(fila.cells[destino], valor)
     return True
 
 
@@ -115,55 +140,68 @@ def gen_balance_docx(datos: dict, plantilla: str | None = None) -> bytes:
     doc = docx.Document(ruta)
     t_cab, t_alum, t_ing, t_gas, t_rem, t_fir = doc.tables[:6]
 
-    # ── Cabeceira ────────────────────────────────────────────────
-    _set(t_cab, "CURSO:", datos.get("curso", ""))
-    fila_per = _fila_por_etiqueta(t_cab, "PERIODO", exacta=False)
-    if fila_per is not None:
-        _escribir(fila_per.cells[1], f"PERÍODO: {datos.get('periodo_txt','')}")
-        _escribir(fila_per.cells[2], datos.get("trimestre", ""))
-    _set(t_cab, "Días de funcionamento:", datos.get("dias", "") or "")
+    # Toda etiqueta que non se atope acumúlase aquí: se falta algunha, o
+    # documento sairía incompleto en silencio, así que mellor fallar.
+    faltan: list[str] = []
 
-    # ── Datos do comedor: en branco agás o tipo ──────────────────
-    _set(t_alum, "Tipo de comedor", datos.get("tipo_comedor", "C"))
+    def poñer(tabla, etiqueta, valor, exacta=True, nova_etiqueta=None, obrigatoria=True):
+        if not _set(tabla, etiqueta, valor, exacta, nova_etiqueta) and obrigatoria:
+            faltan.append(etiqueta)
+
+    # ── Cabeceira: todo dinámico (en vermello na plantilla) ──────
+    poñer(t_cab, "CURSO:", datos.get("curso", ""))
+    fila_per, i_per = _localizar(t_cab, "PERIODO", exacta=False)
+    if fila_per is None:
+        faltan.append("PERÍODO")
+    else:
+        _escribir(fila_per.cells[i_per], f"PERÍODO: {datos.get('periodo_txt','')}")
+        _escribir(fila_per.cells[i_per + 1], datos.get("trimestre", ""))
+    dias = datos.get("dias")
+    poñer(t_cab, "Días de funcionamento:", "" if dias in (None, "") else str(dias))
+
+    # ── Datos do comedor: en branco (en azul na plantilla) ───────
+    poñer(t_alum, "Tipo de comedor", datos.get("tipo_comedor", "C"))
     for etiqueta in ["Número de alumnos con dereito a subvención do 100%",
                      "Número de alumnos que abonan 1 € por xantar",
                      "Número de alumnos que abonan 2,5 € por xantar",
                      "Número de alumnos que abonan 4,5 € por xantar",
                      "Resto do persoal que abona 4,5 € por xantar",
                      "Persoal do comedor"]:
-        _set(t_alum, etiqueta, "")
+        poñer(t_alum, etiqueta, "")
 
     # ── Ingresos ─────────────────────────────────────────────────
     conta = datos.get("conta", "")
-    _set(t_ing, "Saldo inicial na conta da Administración", _eur(datos.get("saldo_inicial")),
-         exacta=False,
-         nova_etiqueta=f"Saldo inicial na conta da Administración {conta}".strip())
-    _set(t_ing, "Importe das subvencións procedentes da Administración",
-         _eur(datos.get("subvencions")))
+    poñer(t_ing, "Saldo inicial na conta da Administración", _eur(datos.get("saldo_inicial")),
+          exacta=False,
+          nova_etiqueta=f"Saldo inicial na conta da Administración {conta}".strip())
+    poñer(t_ing, "Importe das subvencións procedentes da Administración",
+          _eur(datos.get("subvencions")))
     txt_oi = (datos.get("outros_ingresos_txt") or "").strip()
-    _set(t_ing, "Outros ingresos", _eur(datos.get("outros_ingresos")), exacta=False,
-         nova_etiqueta=f"Outros ingresos (especificar). {txt_oi}".strip()
-                       if txt_oi else "Outros ingresos (especificar)")
-    _set(t_ing, "Valoración das existencias no almacén a data de hoxe",
-         _eur(datos.get("existencias")), exacta=False)
-    _set(t_ing, "TOTAL INGRESOS", _eur(datos.get("total_ingresos")))
+    poñer(t_ing, "Outros ingresos", _eur(datos.get("outros_ingresos")), exacta=False,
+          nova_etiqueta=f"Outros ingresos (especificar). {txt_oi}".strip()
+                        if txt_oi else "Outros ingresos (especificar)")
+    poñer(t_ing, "Valoración das existencias no almacén a data de hoxe",
+          _eur(datos.get("existencias")), exacta=False)
+    poñer(t_ing, "TOTAL INGRESOS", _eur(datos.get("total_ingresos")))
 
     # ── Gastos ───────────────────────────────────────────────────
     gastos = datos.get("gastos", {})
     _eliminar_fila(t_gas, FILA_OBVIADA)
     for fila in FILAS_GASTO:
         if fila == "OUTROS":
+            # O texto entre parénteses só ten sentido se esa fila leva importe
             txt_og = (datos.get("outros_gastos_txt") or "").strip()
-            _set(t_gas, "OUTROS", _eur(gastos.get("OUTROS")), exacta=False,
-                 nova_etiqueta=f"OUTROS ({txt_og})" if txt_og else "OUTROS")
+            hai_outros = bool(gastos.get("OUTROS"))
+            poñer(t_gas, "OUTROS", _eur(gastos.get("OUTROS")), exacta=False,
+                  nova_etiqueta=f"OUTROS ({txt_og})" if (txt_og and hai_outros) else "OUTROS")
         else:
-            _set(t_gas, fila, _eur(gastos.get(fila)))
-    _set(t_gas, "TOTAL GASTOS", _eur(datos.get("total_gastos")))
+            poñer(t_gas, fila, _eur(gastos.get(fila)))
+    poñer(t_gas, "TOTAL GASTOS", _eur(datos.get("total_gastos")))
 
     # ── Remanente ────────────────────────────────────────────────
-    _set(t_rem, "REMANENTE", _eur(datos.get("remanente")))
-    _set(t_rem, "SALDO EXISTENTE A", _eur(datos.get("remanente")), exacta=False,
-         nova_etiqueta=f"SALDO EXISTENTE A {datos.get('data_saldo','')}")
+    poñer(t_rem, "REMANENTE", _eur(datos.get("remanente")))
+    poñer(t_rem, "SALDO EXISTENTE A", _eur(datos.get("remanente")), exacta=False,
+          nova_etiqueta=f"SALDO EXISTENTE A {datos.get('data_saldo','')}")
 
     # ── Lugar e data da sinatura ─────────────────────────────────
     lugar_data = datos.get("lugar_data", "")
@@ -174,6 +212,12 @@ def gen_balance_docx(datos: dict, plantilla: str | None = None) -> bytes:
                    re.match(r"^[A-Za-zÁÉÍÓÚÑáéíóúñ ]+, a \d", cela.text.strip()):
                     _escribir(cela, lugar_data)
                     break
+
+    if faltan:
+        raise RuntimeError(
+            "A plantilla non ten estas filas (ou cambiaron de nome): "
+            + ", ".join(faltan)
+            + ". Revisa /data/plantillas/balance_comedor.docx")
 
     buf = io.BytesIO()
     doc.save(buf)
