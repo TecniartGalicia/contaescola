@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from db import get_diario, get_saldo, get_partidas_config
+from db import get_diario, get_saldo, get_partidas
 from utils import fmt, fmtD, sum_tipo
 
 
@@ -20,7 +20,7 @@ def render(ano: int, cur_id: int | None) -> None:
     c1.metric("📘 Saldo Funcionamento", fmt(fs),  delta=fmt(fh-fd))
     c2.metric("🍽️ Saldo Comedor",       fmt(cs),  delta=fmt(ch-cd))
     c3.metric("📝 Movementos", len(fm)+len(cm),   delta=f"F:{len(fm)} C:{len(cm)}")
-    c4.metric("📋 Partidas configuradas", len(get_partidas_config()))
+    c4.metric("📋 Partidas activas", len(get_partidas(solo_activas=True)))
 
     st.divider()
     col1, col2 = st.columns(2)

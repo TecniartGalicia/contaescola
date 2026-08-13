@@ -241,8 +241,14 @@ def _seed_data(con):
             (codigo, desc, orden))
     n = con.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
     if n == 0:
+        # Contrasinal ALEATORIA: unha fixa no código estaría publicada no repo.
+        # Sae polos logs unha soa vez, ao crear a BD desde cero.
         import bcrypt
-        ph = bcrypt.hashpw(b"mateo", bcrypt.gensalt(12)).decode()
+        import secrets
+        pw = secrets.token_urlsafe(10)
+        ph = bcrypt.hashpw(pw.encode(), bcrypt.gensalt(12)).decode()
         con.execute(
             "INSERT OR IGNORE INTO usuarios (username,nome,password,activo) VALUES (?,?,?,1)",
             ("raquel", "Raquel", ph))
+        print(f"[ContaEscola] Usuario inicial 'raquel' creado. Contrasinal: {pw}")
+        print("[ContaEscola] Apúntaa agora e cámbiaa en ⚙️ Táboas Mestras → Usuarios.")

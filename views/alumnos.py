@@ -69,12 +69,18 @@ def render() -> None:
             dl = cd.form_submit_button("🗑️ Eliminar", use_container_width=True) if ae else False
 
             if sv:
-                if not nome.strip():
+                nome_up = nome.strip().upper()
+                if not nome_up:
                     st.error("Nome obrigatorio")
+                elif any(a["nome"] == nome_up and (not ae or a["id"] != ae["id"])
+                         for a in alumnos):
+                    # save_alumno é INSERT OR IGNORE: sen esta comprobación a alta
+                    # repetida descartábase en silencio dicindo "Gardado!"
+                    st.error(f"❌ Xa existe un alumno chamado '{nome_up}'")
                 else:
                     cid_al = (None if cur_al.startswith("—")
                               else next((c["id"] for c in cursos if c["nome"] == cur_al), None))
-                    d = {"nome": nome.strip().upper(), "curso_id": cid_al,
+                    d = {"nome": nome_up, "curso_id": cid_al,
                          "curso_ingreso": "", "importe_beca": imp_beca, "notas": notas}
                     if ae: d["id"] = ae["id"]
                     save_alumno(d)

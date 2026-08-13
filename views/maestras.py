@@ -25,14 +25,27 @@ def render() -> None:
             do = ["— Seleccionar —"] + [c["nome"] for c in cursos]
             ds = st.selectbox("Eliminar curso", do, key="del_cur")
             if ds != "— Seleccionar —" and st.button("🗑️ Confirmar eliminación", key="conf_dc"):
-                delete_curso(next(c["id"] for c in cursos if c["nome"] == ds))
-                st.success("Eliminado"); st.rerun()
+                cid_del = next(c["id"] for c in cursos if c["nome"] == ds)
+                # diario.curso_id non ten ON DELETE: borrar cun movemento
+                # asociado rebentaba cun IntegrityError sen capturar
+                n_movs = q("SELECT COUNT(*) AS n FROM diario WHERE curso_id=? OR partida_curso_id=?",
+                           (cid_del, cid_del))
+                if n_movs and n_movs[0]["n"] > 0:
+                    st.error(f"❌ Non se pode eliminar '{ds}': ten {n_movs[0]['n']} "
+                             "movementos asociados no Diario.")
+                else:
+                    delete_curso(cid_del)
+                    st.success("Eliminado"); st.rerun()
         with st.form("nc_form"):
             st.subheader("➕ Novo curso escolar")
             nome = st.text_input("Nome (ex: 2026-2027)", placeholder="2026-2027")
             if st.form_submit_button("Engadir", type="primary"):
                 if not re.match(r"^\d{4}-\d{4}$", nome.strip()):
                     st.error("Formato incorrecto: usa 2026-2027")
+                elif any(c["nome"] == nome.strip() for c in cursos):
+                    # save_curso é INSERT OR IGNORE: sen esta comprobación a alta
+                    # repetida descartábase en silencio dicindo "engadido!"
+                    st.error(f"❌ O curso '{nome.strip()}' xa existe")
                 else:
                     save_curso(nome.strip())
                     st.success(f"'{nome}' engadido!"); st.rerun()

@@ -16,7 +16,7 @@ from reportlab.platypus import (
 )
 
 from db import (get_anos, get_cursos, get_codigos, get_clientes,
-                get_partidas_config, get_informes, get_saldo, get_cfg)
+                get_partidas, get_informes, get_saldo, get_cfg)
 from db.schema import PERIODOS
 from utils import fmt, fmtD, excel_bytes, gen_pdf
 
@@ -343,8 +343,9 @@ def render(ano: int) -> None:
     cursos   = get_cursos()
     codigos  = get_codigos()
     clientes = get_clientes()
-    pcs      = get_partidas_config()
-    pnames   = sorted(set(p["nome"] for p in pcs))
+    # Partidas globais (modelo vixente) — o filtro lía partidas_config, o modelo
+    # legado, e ofrecía nomes que xa non existen (sempre devolvían 0 resultados)
+    pnames   = [p["nome"] for p in get_partidas()]
     anos     = get_anos()
 
     tab_inf, tab_cuadro = st.tabs([
@@ -573,7 +574,13 @@ def render(ano: int) -> None:
                 trim_label = (trimestre.replace("º TRIMESTRE","T").replace(" ","")
                               if trimestre else "Anual")
                 fname = f"Cuadro_Contas_{ano_sel}_{trim_label}.pdf"
-            st.success("✅ PDF xerado!")
-            st.download_button("⬇️ Descargar Cuadro Presentación",
-                data=pdf_bytes, file_name=fname,
-                mime="application/pdf", key="dl_cuadro")
+            if not pdf_bytes:
+                # O xerador proba varios tamaños de letra; se todos fallan
+                # devolvía b"" e o botón entregaba un ficheiro de 0 bytes
+                st.error("❌ Non se puido xerar o PDF do cuadro. Proba cun "
+                         "tamaño de letra fixo no control 'Texto PDF'.")
+            else:
+                st.success("✅ PDF xerado!")
+                st.download_button("⬇️ Descargar Cuadro Presentación",
+                    data=pdf_bytes, file_name=fname,
+                    mime="application/pdf", key="dl_cuadro")

@@ -112,28 +112,39 @@ def get_balance(curso_id: int, trimestre: str) -> dict | None:
               (curso_id, trimestre))
 
 
-def ultimo_asento_declarado(curso_id: int, ano: int) -> int | None:
-    """Último asento xa incluído nun balance dese exercicio: o seguinte abre o período."""
+def ultimo_asento_declarado(ano: int) -> int | None:
+    """
+    Último asento dese exercicio xa incluído nun balance emitido.
+    A numeración dos asentos é por exercicio (area+ano), non por curso escolar,
+    así que aquí non entra o curso.
+    """
     r = q1("""SELECT MAX(num_ata) m FROM balances_comedor
               WHERE ano=? AND num_ata IS NOT NULL""", (ano,))
     return r["m"] if r and r["m"] else None
 
 
 def save_balance(d: dict, snapshot: dict) -> int:
-    """Garda o informe emitido cunha foto das cifras, para que reemitilo dea o mesmo papel."""
+    """Garda o informe emitido cunha foto das cifras, para que reemitilo dea o mesmo papel.
+
+    creado_en consérvase da primeira emisión: o INSERT OR REPLACE reaplicaría o
+    default datetime('now') e o histórico mostraría a data da última regeneración.
+    """
     return mut("""INSERT OR REPLACE INTO balances_comedor
         (id, curso_id, trimestre, periodo_txt, ano, num_desde, num_ata,
          dias_funcionamento, saldo_inicial, existencias, outros_ingresos_txt,
-         outros_gastos_txt, data_sinatura, snapshot_json)
+         outros_gastos_txt, data_sinatura, snapshot_json, creado_en)
         VALUES ((SELECT id FROM balances_comedor WHERE curso_id=? AND trimestre=?),
-                ?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ?,?,?,?,?,?,?,?,?,?,?,?,?,
+                COALESCE((SELECT creado_en FROM balances_comedor
+                          WHERE curso_id=? AND trimestre=?), datetime('now')))""",
         (d["curso_id"], d["trimestre"],
          d["curso_id"], d["trimestre"], d.get("periodo_txt", ""), d["ano"],
          d["num_desde"], d["num_ata"], d.get("dias_funcionamento", 0),
          d.get("saldo_inicial", 0), d.get("existencias", 0),
          d.get("outros_ingresos_txt", ""), d.get("outros_gastos_txt", ""),
          d.get("data_sinatura", ""),
-         json.dumps(snapshot, ensure_ascii=False, default=str)))
+         json.dumps(snapshot, ensure_ascii=False, default=str),
+         d["curso_id"], d["trimestre"]))
 
 
 def delete_balance(id: int) -> None:

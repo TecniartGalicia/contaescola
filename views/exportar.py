@@ -2,6 +2,7 @@ import io
 import os
 import json
 import shutil
+import sqlite3
 import zipfile
 from datetime import datetime, timedelta
 
@@ -9,7 +10,7 @@ import streamlit as st
 import pandas as pd
 
 from db import (get_diario, get_clientes, get_alumnos, get_cursos,
-                get_partidas_config, get_partidas_resumen, get_becas_resumen,
+                get_partidas, get_partidas_resumen_global, get_becas_resumen,
                 get_codigos, get_anos)
 from db.connection import q, q1, mut, DB_PATH
 from utils import excel_bytes
@@ -33,7 +34,9 @@ def _crear_zip_backup() -> bytes:
 
         # 2. JSON de cada tabla como respaldo extra
         tablas = ["configuracion", "anos", "cursos", "codigos", "clientes",
-                  "alumnos_neae", "partidas_config", "saldos", "diario", "usuarios"]
+                  "alumnos_neae", "partidas_config", "saldos", "diario", "usuarios",
+                  "partidas", "partidas_saldos", "partidas_saldos_curso",
+                  "balances_comedor"]
         export_data = {}
         for tabla in tablas:
             try:
@@ -41,6 +44,15 @@ def _crear_zip_backup() -> bytes:
                 export_data[tabla] = rows
             except Exception:
                 pass
+
+        # 3. Plantillas (balance de comedor, etc.) — viven fóra do repo,
+        #    así que o backup é a única copia ademais do propio volume
+        plant_dir = os.path.join(os.path.dirname(DB_PATH), "plantillas")
+        if os.path.isdir(plant_dir):
+            for fn in os.listdir(plant_dir):
+                ruta_p = os.path.join(plant_dir, fn)
+                if os.path.isfile(ruta_p):
+                    zf.write(ruta_p, f"plantillas/{fn}")
 
         meta = {
             "version":    "ContaEscola v6",
@@ -155,8 +167,6 @@ def render(ano: int) -> None:
         fm       = get_diario("func", ano)
         cm       = get_diario("com",  ano)
         clientes = get_clientes()
-        pcs      = get_partidas_config()
-        res      = get_partidas_resumen(ano)
         becas    = get_becas_resumen(ano)
 
         c1, c2 = st.columns(2)
@@ -202,13 +212,18 @@ def render(ano: int) -> None:
 
         with c3:
             st.subheader("📋 Partidas + Becas")
-            df_p = pd.DataFrame([{
-                "Curso":    p.get("curso_nome",""), "Partida": p["nome"],
-                "Asignado": p["importe_asignado"],
-                "Gastado":  res.get(p["nome"],{}).get("debe",0),
-                "Ingresado": res.get(p["nome"],{}).get("haber",0),
-                "Pendente": p["importe_asignado"] - res.get(p["nome"],{}).get("debe",0),
-            } for p in pcs])
+            # Partidas globais (o modelo vixente), non partidas_config (legado)
+            rows_p = []
+            for p in get_partidas():
+                r = get_partidas_resumen_global(p["nome"])
+                rows_p.append({
+                    "Partida":       p["nome"],
+                    "Saldo inicial": p["saldo_inicial"],
+                    "Gastado":       r["debe"],
+                    "Ingresado":     r["haber"],
+                    "Balance":       round(p["saldo_inicial"] + r["haber"] - r["debe"], 2),
+                })
+            df_p = pd.DataFrame(rows_p)
             brows = []
             for alumno, d in becas.items():
                 for m in d["movs"]:
@@ -401,8 +416,29 @@ def render(ano: int) -> None:
                                 _restaurar_zip(io.BytesIO(f.read()))
 
 
+def _validar_db(ruta: str) -> str | None:
+    """Comproba que o ficheiro é unha BD SQLite íntegra co esquema de ContaEscola.
+    Devolve None se é válida, ou o motivo do rexeitamento."""
+    try:
+        con = sqlite3.connect(f"file:{ruta}?mode=ro", uri=True)
+        integridade = con.execute("PRAGMA integrity_check").fetchone()[0]
+        ten_diario = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='diario'"
+        ).fetchone()
+        con.close()
+    except Exception as e:
+        return f"non é unha base de datos SQLite lexible ({e})"
+    if integridade != "ok":
+        return f"a base de datos está corrupta (integrity_check: {integridade})"
+    if not ten_diario:
+        return "non contén a táboa 'diario' — non parece un backup de ContaEscola"
+    return None
+
+
 def _restaurar_zip(zip_buf: io.BytesIO):
-    """Extrae el ZIP y restaura la BD."""
+    """Extrae el ZIP, VALIDA la BD y solo entonces la restaura."""
+    tmp = DB_PATH + ".restore_tmp"
+    restaurado = False
     try:
         with st.spinner("Restaurando backup..."):
             with zipfile.ZipFile(zip_buf, "r") as zf:
@@ -412,25 +448,45 @@ def _restaurar_zip(zip_buf: io.BytesIO):
                     st.error("❌ Arquivo ZIP inválido: non contén contaescola.db")
                     return
 
-                # Hacer copia de seguridad de la BD actual antes de sobreescribir
+                # 1. Extraer a un temporal e validar ANTES de tocar nada:
+                #    escribir un ficheiro corrupto enriba do bo non lanza
+                #    ningunha excepción, así que hai que comprobalo á man
+                with open(tmp, "wb") as f:
+                    f.write(zf.read("contaescola.db"))
+                motivo = _validar_db(tmp)
+                if motivo:
+                    os.remove(tmp)
+                    st.error(f"❌ Backup rexeitado: {motivo}. Non se cambiou nada.")
+                    return
+
+                # 2. Copia de seguridade da BD actual
                 if os.path.exists(DB_PATH):
-                    backup_prev = DB_PATH + ".pre_restore"
-                    shutil.copy2(DB_PATH, backup_prev)
+                    shutil.copy2(DB_PATH, DB_PATH + ".pre_restore")
 
-                # Extraer la BD del ZIP
-                db_data = zf.read("contaescola.db")
-                with open(DB_PATH, "wb") as f:
-                    f.write(db_data)
+                # 3. Substituír
+                shutil.move(tmp, DB_PATH)
 
-        st.success("✅ Backup restaurado correctamente. A app reiniciarase.")
-        # Limpiar session state para forzar reinicio
-        st.session_state.clear()
-        st.rerun()
+                # 4. Restaurar tamén as plantillas se veñen no ZIP
+                for n in nombres:
+                    if n.startswith("plantillas/") and not n.endswith("/"):
+                        dest = os.path.join(os.path.dirname(DB_PATH), n)
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        with open(dest, "wb") as f:
+                            f.write(zf.read(n))
+                restaurado = True
 
     except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
         st.error(f"❌ Erro ao restaurar: {e}")
-        # Intentar recuperar la BD anterior
         backup_prev = DB_PATH + ".pre_restore"
         if os.path.exists(backup_prev):
             shutil.copy2(backup_prev, DB_PATH)
             st.warning("BD anterior recuperada automáticamente")
+
+    # Fóra do try: st.rerun() lanza unha excepción interna de Streamlit que o
+    # except Exception atraparía — e desfaría a restauración co .pre_restore
+    if restaurado:
+        st.success("✅ Backup restaurado correctamente. A app reiniciarase.")
+        st.session_state.clear()
+        st.rerun()

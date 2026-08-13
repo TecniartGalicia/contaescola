@@ -293,12 +293,18 @@ def _render_xestion_partidas(partidas):
             else:
                 d = {"nome": nome_val.strip().upper(), "notas": notas_val, "activa": activa_val}
                 if pe: d["id"] = pe["id"]
-                save_partida(d); st.success(f"✅ '{nome_val}' gardada!"); st.rerun()
+                try:
+                    save_partida(d)
+                    st.success(f"✅ '{nome_val}' gardada!"); st.rerun()
+                except ValueError as e:
+                    st.error(f"❌ {e}")
         if dl and pe:
             n = q("SELECT COUNT(*) as n FROM diario WHERE xustifica=?", (pe["nome"],))
             if n and n[0]["n"] > 0:
-                st.warning(f"⚠️ Esta partida ten {n[0]['n']} movementos asignados.")
-            delete_partida(pe["id"]); st.success("🗑️ Eliminada"); st.rerun()
+                st.error(f"❌ Non se pode eliminar: ten {n[0]['n']} movementos asignados. "
+                         "Reasigna ou elimina primeiro eses movementos no Diario.")
+            else:
+                delete_partida(pe["id"]); st.success("🗑️ Eliminada"); st.rerun()
 
 
 # ── Exportación múltiple ──────────────────────────────────────────

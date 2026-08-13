@@ -5,6 +5,7 @@ Balance de comedores escolares — o impreso trimestral da Consellería.
 O período córtase por número de asento, non por datas: os asentos numéranse por
 orde de rexistro e o corte real do centro é "do asento X ao asento Y".
 """
+import json
 from datetime import date
 
 import streamlit as st
@@ -57,19 +58,19 @@ def render(ano: int, cur_id: int | None) -> None:
                            help="O 1º trimestre do curso adoita saír do exercicio anterior")
 
     xa_emitido = get_balance(curso["id"], trim)
+    snap = (json.loads(xa_emitido["snapshot_json"] or "{}") or {}) if xa_emitido else {}
     if xa_emitido:
         st.info(f"ℹ️ Este trimestre xa se emitiu o "
                 f"{fmtD(xa_emitido['creado_en'][:10])} — asentos "
                 f"{xa_emitido['num_desde']} a {xa_emitido['num_ata']}, remanente "
-                f"{fmt((__import__('json').loads(xa_emitido['snapshot_json'] or '{}') or {}).get('remanente', 0))}. "
-                f"Se o volves gardar, substitúese.")
+                f"{fmt(snap.get('remanente', 0))}. Se o volves gardar, substitúese.")
 
     dispo_min, dispo_max = get_rango_dispoñible(ano_sel)
     if dispo_max == 0:
         st.warning(f"Non hai asentos de comedor no exercicio {ano_sel}.")
         return
 
-    ultimo = ultimo_asento_declarado(curso["id"], ano_sel)
+    ultimo = ultimo_asento_declarado(ano_sel)
     desde_def = (xa_emitido["num_desde"] if xa_emitido
                  else (ultimo + 1 if ultimo and ultimo < dispo_max else dispo_min))
     ata_def = xa_emitido["num_ata"] if xa_emitido else dispo_max
@@ -129,9 +130,31 @@ def render(ano: int, cur_id: int | None) -> None:
         pendentes = len([1 for _ in range(ata + 1, dispo_max + 1)])
         st.info(f"ℹ️ Quedan asentos posteriores ao {ata} sen declarar neste balance "
                 f"(ata o {dispo_max}, {pendentes} números).")
-    if ultimo and desde > ultimo + 1 and not xa_emitido:
-        st.warning(f"⚠️ O último asento declarado noutro balance foi o {ultimo}; "
-                   f"estás empezando no {desde} e quedan {desde - ultimo - 1} sen declarar.")
+    if ultimo and not xa_emitido:
+        if ultimo >= dispo_max:
+            st.info(f"ℹ️ Todos os asentos do exercicio {ano_sel} (ata o {dispo_max}) "
+                    f"xa están declarados noutros balances.")
+        elif desde <= ultimo:
+            st.warning(f"⚠️ Os asentos ata o {ultimo} xa están declarados noutro "
+                       f"balance: este rango solápase con el.")
+        elif desde > ultimo + 1:
+            st.warning(f"⚠️ O último asento declarado noutro balance foi o {ultimo}; "
+                       f"estás empezando no {desde} e quedan {desde - ultimo - 1} sen declarar.")
+
+    # Se o diario cambiou despois de emitir, o papel novo non coincidiría co
+    # certificado: avísase comparando coa foto gardada na emisión
+    if (xa_emitido and snap and desde == xa_emitido["num_desde"]
+            and ata == xa_emitido["num_ata"]):
+        difs = []
+        for k, lbl in [("saldo_inicial", "saldo inicial"), ("subvencions", "subvencións"),
+                       ("outros_ingresos", "outros ingresos"),
+                       ("total_gastos", "total gastos"), ("remanente", "remanente")]:
+            if k in snap and abs((snap.get(k) or 0) - bal[k]) > 0.005:
+                difs.append(f"{lbl}: {fmt(snap[k])} → {fmt(bal[k])}")
+        if difs:
+            st.error("🚨 O diario cambiou despois de emitir este balance. "
+                     "O documento que descargues agora NON coincidirá co papel "
+                     "certificado: " + " · ".join(difs))
 
     # ── Vista previa ─────────────────────────────────────────────
     m1, m2, m3, m4 = st.columns(4)
@@ -172,7 +195,14 @@ def render(ano: int, cur_id: int | None) -> None:
     # ── Descarga ─────────────────────────────────────────────────
     st.divider()
     cd1, cd2 = st.columns([1, 2])
-    data_sin = cd1.date_input("📅 Data da sinatura", value=date.today(), key="bc_data_sin")
+    # Ao reabrir un balance emitido, propor a data de sinatura gardada
+    data_def = date.today()
+    if xa_emitido and xa_emitido.get("data_sinatura"):
+        try:
+            data_def = date.fromisoformat(xa_emitido["data_sinatura"])
+        except ValueError:
+            pass
+    data_sin = cd1.date_input("📅 Data da sinatura", value=data_def, key="bc_data_sin")
     lugar = get_cfg("comedor_lugar", "")
     cd2.caption(f"O documento sairá asinado en **{lugar}**, con data "
                 f"**{_data_longa(data_sin)}**. Os datos de alumnos van en branco: "
@@ -220,12 +250,11 @@ def render(ano: int, cur_id: int | None) -> None:
     if emitidos:
         st.divider()
         st.markdown("**🗂️ Balances emitidos**")
-        import json as _json
         st.dataframe(pd.DataFrame([{
             "Curso": b["curso_nome"], "Trimestre": b["trimestre"],
             "Período": b["periodo_txt"], "Exercicio": b["ano"],
             "Asentos": f"{b['num_desde']} – {b['num_ata']}",
             "Días": b["dias_funcionamento"] or "",
-            "Remanente €": (_json.loads(b["snapshot_json"] or "{}") or {}).get("remanente"),
+            "Remanente €": (json.loads(b["snapshot_json"] or "{}") or {}).get("remanente"),
             "Emitido": fmtD(b["creado_en"][:10]),
         } for b in emitidos]), use_container_width=True, hide_index=True)

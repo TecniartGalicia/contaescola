@@ -89,4 +89,11 @@ def render() -> None:
                     save_cliente(d)
                     st.success("Gardado ✓"); st.rerun()
             if dl and ce:
-                delete_cliente(ce["id"]); st.success("Eliminado"); st.rerun()
+                # O FK de diario.cliente_id non ten ON DELETE: borrar cun
+                # movemento vinculado rebentaba cun IntegrityError sen capturar
+                movs_ce = get_diario_cliente(ce["id"])
+                if movs_ce:
+                    st.error(f"❌ Non se pode eliminar: ten {len(movs_ce)} movementos "
+                             "vinculados no Diario. Desvincúlaos primeiro.")
+                else:
+                    delete_cliente(ce["id"]); st.success("Eliminado"); st.rerun()

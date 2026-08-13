@@ -118,4 +118,9 @@ def render_sidebar() -> tuple[int, int | None]:
         st.divider()
         st.caption(f"🟢 SQLite · Ano {ano_sel}")
 
+        if st.button("🚪 Pechar sesión", key="btn_logout", use_container_width=True):
+            st.session_state.pop("logged_in", None)
+            st.session_state.pop("username", None)
+            st.rerun()
+
     return ano_sel, cur_id

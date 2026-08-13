@@ -74,8 +74,15 @@ def delete_cliente(id: int) -> None:
 
 def save_alumno(d: dict) -> int:
     if d.get("id"):
+        from .connection import q1
+        anterior = q1("SELECT nome FROM alumnos_neae WHERE id=?", (d["id"],))
         mut("UPDATE alumnos_neae SET nome=?,curso_id=?,curso_ingreso=?,importe_beca=?,notas=? WHERE id=?",
             (d["nome"],d.get("curso_id"),d["curso_ingreso"],d.get("importe_beca",0),d["notas"],d["id"]))
+        # diario.alumno_neae liga polo NOME: sen propagar o renomeado, os
+        # movementos quedaban orfos co nome vello (caso ANDREA/MATHÍAS)
+        if anterior and anterior["nome"] != d["nome"]:
+            mut("UPDATE diario SET alumno_neae=? WHERE alumno_neae=?",
+                (d["nome"], anterior["nome"]))
         return d["id"]
     return mut(
         "INSERT OR IGNORE INTO alumnos_neae (nome,curso_id,curso_ingreso,importe_beca,notas) VALUES (?,?,?,?,?)",
@@ -103,13 +110,34 @@ def delete_codigo(id: int) -> None:
     mut("DELETE FROM codigos WHERE id=?", (id,))
 
 def save_partida(d: dict) -> int:
+    """
+    Alta/edición de partida.
+
+    - NUNCA usa INSERT OR REPLACE: en SQLite o REPLACE é un DELETE+INSERT e,
+      como partidas_saldos/partidas_saldos_curso colgan con ON DELETE CASCADE,
+      recrear unha partida co mesmo nome borraba os seus remanentes consolidados.
+    - Ao renomear, propaga o cambio a diario.xustifica (os movementos ligan a
+      partida polo NOME): sen isto quedaban orfos co nome vello.
+    - Lanza ValueError se o nome xa está usado por outra partida.
+    """
+    from .connection import q1
+    nome = d["nome"]
+    existente = q1("SELECT id, nome FROM partidas WHERE nome=?", (nome,))
     if d.get("id"):
+        if existente and existente["id"] != d["id"]:
+            raise ValueError(f"Xa existe outra partida chamada '{nome}'")
+        anterior = q1("SELECT nome FROM partidas WHERE id=?", (d["id"],))
         mut("UPDATE partidas SET nome=?,notas=?,activa=? WHERE id=?",
-            (d["nome"],d.get("notas",""),1 if d.get("activa",True) else 0,d["id"]))
+            (nome,d.get("notas",""),1 if d.get("activa",True) else 0,d["id"]))
+        if anterior and anterior["nome"] != nome:
+            mut("UPDATE diario SET xustifica=? WHERE xustifica=?",
+                (nome, anterior["nome"]))
         return d["id"]
+    if existente:
+        raise ValueError(f"A partida '{nome}' xa existe — edítaa no canto de creala de novo")
     return mut(
-        "INSERT OR REPLACE INTO partidas (nome,notas,activa) VALUES (?,?,1)",
-        (d["nome"],d.get("notas","")))
+        "INSERT INTO partidas (nome,notas,activa) VALUES (?,?,1)",
+        (nome,d.get("notas","")))
 
 def delete_partida(id: int) -> None:
     mut("DELETE FROM partidas WHERE id=?", (id,))

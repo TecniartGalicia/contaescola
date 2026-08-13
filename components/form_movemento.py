@@ -10,7 +10,7 @@ from db import (
     save_diario, delete_diario,
 )
 from db.connection import q1
-from db.schema import CATEGORIAS_COM
+from db.schema import CATEGORIAS_COM_GASTO, CATEGORIAS_COM_INGRESO
 from utils import fecha_to_trimestre
 
 
@@ -60,14 +60,16 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
     )
     xust_v = "" if xust_pre.startswith("—") else xust_pre
 
+    # ── Paso 1c: Tipo (fóra do form → o desplegable de categoría
+    #    reacciona: as de gasto e as de ingreso son listas distintas) ─
+    tipo = st.radio("Tipo *", ["G — Gasto / Debe", "I — Ingreso / Haber"],
+                    index=0 if (mov is None or mov.get("tipo","G")=="G") else 1,
+                    horizontal=True, key=f"{key_prefix}_tipo")
+    tipo_v = "G" if tipo.startswith("G") else "I"
+
     # ── Paso 2: Datos do movemento (dentro do form) ────────────────
     st.markdown("**📝 Paso 2 — Datos do movemento**")
     with st.form(key=f"{key_prefix}_form"):
-        tipo = st.radio("Tipo *", ["G — Gasto / Debe", "I — Ingreso / Haber"],
-                        index=0 if (mov is None or mov.get("tipo","G")=="G") else 1,
-                        horizontal=True, key=f"{key_prefix}_tipo")
-        tipo_v = "G" if tipo.startswith("G") else "I"
-
         c1, c2 = st.columns(2)
         data_v = c1.date_input("📅 Data *",
             value=datetime.strptime(mov["data"],"%Y-%m-%d").date()
@@ -95,10 +97,15 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
             cod_d = "" if cod_sel.startswith("—") else " — ".join(cod_sel.split(" — ")[1:])
             cat_v = ""
         else:
-            cat_def = (CATEGORIAS_COM.index(mov["categoria"])
-                       if mov and mov.get("categoria") in CATEGORIAS_COM else 0)
-            cat_v = c3.selectbox("🗂️ Categoría", CATEGORIAS_COM,
-                                  index=cat_def, key=f"{key_prefix}_cat")
+            cat_opts = list(CATEGORIAS_COM_GASTO if tipo_v == "G"
+                            else CATEGORIAS_COM_INGRESO)
+            # Ao editar, non perder un valor histórico que xa non estea na lista
+            if mov and mov.get("categoria") and mov["categoria"] not in cat_opts:
+                cat_opts.append(mov["categoria"])
+            cat_def = (cat_opts.index(mov["categoria"])
+                       if mov and mov.get("categoria") in cat_opts else 0)
+            cat_v = c3.selectbox("🗂️ Categoría", cat_opts, index=cat_def,
+                                  key=f"{key_prefix}_cat_{tipo_v}")
             cod_v = ""; cod_d = ""
 
         cl_opts = ["— Sen vincular —"] + [
@@ -123,6 +130,11 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
         not_v = st.text_area("📌 Notas", value=mov.get("notas","") if mov else "",
                              key=f"{key_prefix}_not", height=55)
 
+        confirm_del = False
+        if mov:
+            confirm_del = st.checkbox("⚠️ Confirmo que quero eliminar este movemento",
+                                      key=f"{key_prefix}_confdel")
+
         cs, cd = st.columns([3, 1])
         submitted = cs.form_submit_button("💾 Gardar", use_container_width=True, type="primary")
         del_btn   = (cd.form_submit_button("🗑️ Eliminar", use_container_width=True)
@@ -131,9 +143,18 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
         if submitted:
             if not con_v.strip():
                 st.error("Concepto obrigatorio"); return False
-            periodo_auto = fecha_to_trimestre(str(data_v))
+            # Exercicio: ao editar consérvase o do movemento — antes tomábase o
+            # ano activo do sidebar e o asento cambiaba de exercicio en silencio
+            # conservando o seu num (colisión de numeración)
+            ano_mov = mov["ano"] if mov and mov.get("ano") else ano_act
+            # Período: recalcúlase só se cambia a data, para non alterar en
+            # silencio o trimestre dun asento xa declarado
+            if mov and mov.get("periodo") and str(data_v) == str(mov.get("data")):
+                periodo_auto = mov["periodo"]
+            else:
+                periodo_auto = fecha_to_trimestre(str(data_v))
             payload = {
-                "area": area, "ano": ano_act, "curso_id": cur_id_v,
+                "area": area, "ano": ano_mov, "curso_id": cur_id_v,
                 "partida_curso_id": cur_id_v if xust_v else None,
                 "tipo": tipo_v, "data": str(data_v), "importe": imp_v,
                 "concepto": con_v.strip().upper(), "codigo": cod_v,
@@ -148,6 +169,9 @@ def form_movemento(area: str, mov: dict | None = None, key_prefix: str = "mov") 
             return True
 
         if del_btn and mov and mov.get("id"):
+            if not confirm_del:
+                st.error("❌ Marca a casiña de confirmación para eliminar")
+                return False
             delete_diario(mov["id"]); st.success("🗑️ Eliminado"); return True
 
     return False
