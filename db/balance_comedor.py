@@ -10,6 +10,7 @@ import json
 
 from .connection import q, q1, mut
 from .queries import get_saldo
+from .schema import CATEGORIAS_COM_INGRESO
 
 TRIMESTRES = ["1º TRIM", "2º TRIM", "3º TRIM", "4º TRIM"]
 PERIODOS_SUXERIDOS = {
@@ -73,7 +74,7 @@ def calcular_balance(ano: int, desde: int, ata: int,
                 subvencions += m["importe"]
             else:
                 outros_ingresos += m["importe"]
-                if cat not in ("OUTROS", ""):
+                if cat and cat not in CATEGORIAS_COM_INGRESO:
                     sen_clasificar.append(m)
         else:
             fila = CATEGORIA_A_FILA.get(cat)
