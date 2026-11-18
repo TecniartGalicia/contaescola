@@ -14,7 +14,7 @@ jobs:
           resposta=$(curl -sS -w '\n%{http_code}' -X POST \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "http://178.104.59.198:8000/api/v1/deploy?uuid=jx3ebxis3nyojukvasofysak&force=false")
+            "https://coolify.argalla.com/api/v1/deploy?uuid=jx3ebxis3nyojukvasofysak&force=false")
           codigo=$(echo "$resposta" | tail -n1)
           corpo=$(echo "$resposta" | sed '$d')
           echo "HTTP $codigo"
